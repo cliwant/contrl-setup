@@ -94,13 +94,13 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 
 깨끗한 상태 + 초대된 계정 + `repo` 스코프 토큰으로 처음부터 끝까지 실행한다.
 
-기대: git 설치 → gh 설치 → PAT 저장 → clone 검증까지 전부 통과하고, 마지막 출력이 다음 단계를 그대로 복사할 수 있는 형태로 안내한다.
+기대: git 설치 → gh 설치 → PAT 저장 → clone 검증까지 전부 통과하고, 마지막 출력이 Claude Desktop을 열라고 안내한다.
 
 ```
-모든 단계 완료. Claude Desktop을 열고 아래를 차례로 입력하세요.
-  /plugin marketplace add cliwant/contrl-harness
-  /plugin install contrl@contrl-harness
+모든 단계 완료. Claude Desktop을 열어 주세요.
 ```
+
+플러그인 설치 명령어는 스크립트가 안내하지 않는다. 그 단계는 별도 안내 경로가 담당한다.
 
 ## 검증하지 않는 것
 

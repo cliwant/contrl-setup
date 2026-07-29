@@ -358,6 +358,4 @@ install_gh
 ensure_access
 
 printf '\n'
-ok "모든 단계 완료. Claude Desktop을 열고 아래를 차례로 입력하세요."
-printf '        /plugin marketplace add %s\n' "$REPO"
-printf '        /plugin install contrl@contrl-harness\n'
+ok "모든 단계 완료. Claude Desktop을 열어 주세요."

@@ -273,6 +273,4 @@ Install-Gh
 Confirm-RepoAccess
 
 Write-Host ''
-Write-Ok "모든 단계 완료. Claude Desktop을 열고 아래를 차례로 입력하세요."
-Write-Host "        /plugin marketplace add $Repo" -ForegroundColor Green
-Write-Host "        /plugin install contrl@contrl-harness" -ForegroundColor Green
+Write-Ok "모든 단계 완료. Claude Desktop을 열어 주세요."
