@@ -1,4 +1,4 @@
-# CONTRL 설치
+# CONTRL 환경 준비
 
 제안서 자동화 harness를 쓰기 위한 개발 환경을 한 번에 준비합니다. git과 GitHub CLI를 설치하고, GitHub 접근 토큰을 저장한 뒤, 저장소를 받아올 수 있는지 확인합니다.
 
