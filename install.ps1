@@ -152,8 +152,45 @@ function Install-Gh {
 }
 
 # ── 3. Claude Code 설치 ───────────────────────────────────────────────
+# 공식 installer가 claude.exe를 %USERPROFILE%\.local\bin 에 설치하고도 사용자
+# PATH 레지스트리 등록에는 실패한 채 exit 0으로 끝나는 사례가 있다(경고로만
+# 처리). 산출물이 실제로 있으면 PATH를 직접 등록한다. 등록 성공 여부와 무관하게
+# claude.exe 존재 여부를 반환한다.
+function Register-ClaudeBinPath {
+    $claudeBin = Join-Path $env:USERPROFILE '.local\bin'
+    if (-not (Test-Path (Join-Path $claudeBin 'claude.exe'))) { return $false }
+
+    $key = 'HKCU:\Environment'
+    $raw = (Get-Item $key).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+    if ($raw -notmatch [regex]::Escape('.local\bin')) {
+        # [Environment]::SetEnvironmentVariable 은 값을 REG_SZ로 써서 기존
+        # %USERPROFILE% 류 항목의 확장이 깨진다 — REG_EXPAND_SZ 타입을 보존해
+        # 직접 쓴다. 빈 항목(중복 세미콜론)은 이때 정리된다.
+        $entries = @($raw -split ';' | Where-Object { $_ }) + '%USERPROFILE%\.local\bin'
+        Set-ItemProperty -Path $key -Name Path -Value ($entries -join ';') -Type ExpandString
+
+        # 이후에 뜨는 프로세스(예: Claude Desktop)가 재로그인 없이 갱신된 PATH를
+        # 보도록 환경 변경을 브로드캐스트한다. 실패해도 치명적이지 않다.
+        try {
+            Add-Type -Namespace Win32 -Name Env -MemberDefinition '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
+            [UIntPtr]$result = [UIntPtr]::Zero
+            [Win32.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result) | Out-Null
+        }
+        catch { }
+    }
+
+    Update-SessionPath
+    # Update-SessionPath 는 레지스트리의 %VAR% 미확장 값을 그대로 이어붙일 수
+    # 있으므로, 현재 세션 PATH에는 확장된 실제 경로를 별도로 추가한다.
+    $env:Path += ";$claudeBin"
+    return $true
+}
+
 function Install-Claude {
     Update-SessionPath
+    # PATH 미등록 상태로 이전 실행이 중단됐다면 여기서 복구된다 — 이미 받아 둔
+    # 바이너리를 살려서 재다운로드 루프를 끊는다.
+    if (-not (Test-Command 'claude')) { Register-ClaudeBinPath | Out-Null }
     if (Test-Command 'claude') {
         $v = (Invoke-Native { claude --version }).Output
         Write-Ok "Claude Code 이미 설치됨 ($v)"
@@ -191,6 +228,7 @@ function Install-Claude {
     }
 
     Update-SessionPath
+    if (-not (Test-Command 'claude')) { Register-ClaudeBinPath | Out-Null }
     if (-not (Test-Command 'claude')) {
         Stop-Fail "Claude Code 설치 후에도 claude 명령을 찾지 못했습니다. 새 PowerShell 창을 열고 다시 실행해 보세요."
     }
