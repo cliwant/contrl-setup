@@ -38,7 +38,12 @@ $SkipVerify  = -not [string]::IsNullOrWhiteSpace($env:CONTRL_SKIP_VERIFY)
 function Write-Info { param([string]$Msg) Write-Host "[INFO]  $Msg" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$Msg) Write-Host "[ OK ]  $Msg" -ForegroundColor Green }
 function Write-Warn { param([string]$Msg) Write-Host "[WARN]  $Msg" -ForegroundColor Yellow }
-function Stop-Fail  { param([string]$Msg) Write-Host "[FAIL]  $Msg" -ForegroundColor Red; exit 1 }
+
+# `irm | iex` 실행에서는 스크립트가 사용자 세션의 스코프에서 그대로 돌기 때문에,
+# 여기서 exit를 부르면 스크립트가 아니라 터미널 창이 통째로 닫힌다 — 유저는
+# 실패 메시지를 읽을 새도 없다. 그래서 exit 대신 throw로 중단하고, 맨 아래
+# 실행 구간의 try/catch가 받아서 세션을 살려 둔 채 끝낸다.
+function Stop-Fail  { param([string]$Msg) Write-Host "[FAIL]  $Msg" -ForegroundColor Red; throw 'CONTRL-INSTALL-FAILED' }
 
 # ── 네이티브 명령 실행 래퍼 ───────────────────────────────────────────
 # stderr를 ErrorRecord로 승격시키지 않고, 종료 코드와 출력을 함께 돌려준다.
@@ -77,17 +82,21 @@ function Update-SessionPath {
 }
 
 # ── 사전 점검 ─────────────────────────────────────────────────────────
-if ($PSVersionTable.PSVersion.Major -lt 5) {
-    Stop-Fail "PowerShell 5.1 이상이 필요합니다. (현재: $($PSVersionTable.PSVersion))"
+# Stop-Fail이 throw 기반이므로 top-level이 아니라 함수로 두고, 맨 아래
+# 실행 구간의 try 안에서 부른다.
+function Test-Prerequisites {
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        Stop-Fail "PowerShell 5.1 이상이 필요합니다. (현재: $($PSVersionTable.PSVersion))"
+    }
+
+    Update-SessionPath
+
+    if (-not (Test-Command 'winget')) {
+        Stop-Fail "winget(App Installer)이 없습니다. Microsoft Store에서 'App Installer'를 먼저 설치해 주세요."
+    }
+
+    Write-Info "플랫폼: Windows / 패키지 매니저: winget"
 }
-
-Update-SessionPath
-
-if (-not (Test-Command 'winget')) {
-    Stop-Fail "winget(App Installer)이 없습니다. Microsoft Store에서 'App Installer'를 먼저 설치해 주세요."
-}
-
-Write-Info "플랫폼: Windows / 패키지 매니저: winget"
 
 # ── 공통 설치 함수 ────────────────────────────────────────────────────
 function Install-WingetPackage {
@@ -153,11 +162,18 @@ function Install-Claude {
 
     Write-Info "Claude Code 설치 중..."
     # 공식 설치 스크립트 — 자동 업데이트되는 네이티브 빌드를 설치한다.
+    # 공식 스크립트는 내부에서 exit를 호출하므로 iex로 현재 세션에서 돌리면
+    # 사용자 터미널이 통째로 닫힌다. 자식 프로세스로 격리해 실행하고
+    # 종료 코드로만 판정한다.
     try {
-        Invoke-Expression (Invoke-RestMethod 'https://claude.ai/install.ps1')
+        $proc = Start-Process -FilePath 'powershell' -Wait -PassThru -NoNewWindow -ArgumentList `
+            '-NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"'
     }
     catch {
         Stop-Fail "Claude Code 설치 실패`n        $($_.Exception.Message)"
+    }
+    if ($proc.ExitCode -ne 0) {
+        Stop-Fail "Claude Code 설치 실패 (exit code $($proc.ExitCode))"
     }
 
     Update-SessionPath
@@ -301,10 +317,23 @@ function Confirm-RepoAccess {
 }
 
 # ── 실행 ──────────────────────────────────────────────────────────────
-Install-Git
-Install-Gh
-Install-Claude
-Confirm-RepoAccess
+# Stop-Fail의 throw를 여기서 받는다. exit를 쓰지 않으므로 `irm | iex` 로 실행한
+# 사용자 터미널이 닫히지 않고, 실패 메시지가 화면에 남는다.
+try {
+    Test-Prerequisites
+    Install-Git
+    Install-Gh
+    Install-Claude
+    Confirm-RepoAccess
 
-Write-Host ''
-Write-Ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+    Write-Host ''
+    Write-Ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+}
+catch {
+    if ($_.FullyQualifiedErrorId -notmatch 'CONTRL-INSTALL-FAILED') {
+        # Stop-Fail을 거치지 않은 예상 밖의 오류 — 원인을 그대로 보여준다.
+        Write-Host "[FAIL]  예상하지 못한 오류로 설치를 중단했습니다:" -ForegroundColor Red
+        Write-Host "        $($_.Exception.Message)" -ForegroundColor Red
+    }
+    Write-Host "        문제가 해결되면 같은 명령어로 다시 실행해 주세요." -ForegroundColor Yellow
+}
