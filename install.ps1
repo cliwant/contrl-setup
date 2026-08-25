@@ -165,15 +165,29 @@ function Install-Claude {
     # 공식 스크립트는 내부에서 exit를 호출하므로 iex로 현재 세션에서 돌리면
     # 사용자 터미널이 통째로 닫힌다. 자식 프로세스로 격리해 실행하고
     # 종료 코드로만 판정한다.
+    #
+    # Start-Process 는 쓰지 않는다 — 관리형 PC의 보안 정책(EDR/AppLocker)이
+    # ShellExecute 경로의 powershell 재기동을 '액세스 거부'로 차단하는 사례가
+    # 있었다. 임시 파일로 받아 & 호출 연산자로 직접 실행하면 콘솔을 상속하는
+    # 일반 자식 프로세스라 정책에 덜 걸린다.
+    $installerPath = Join-Path $env:TEMP 'claude-code-install.ps1'
     try {
-        $proc = Start-Process -FilePath 'powershell' -Wait -PassThru -NoNewWindow -ArgumentList `
-            '-NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"'
+        Invoke-RestMethod 'https://claude.ai/install.ps1' -OutFile $installerPath
     }
     catch {
-        Stop-Fail "Claude Code 설치 실패`n        $($_.Exception.Message)"
+        Stop-Fail "Claude Code 설치 스크립트 다운로드 실패`n        $($_.Exception.Message)"
     }
-    if ($proc.ExitCode -ne 0) {
-        Stop-Fail "Claude Code 설치 실패 (exit code $($proc.ExitCode))"
+
+    # PS 5.1 은 $PSHOME\powershell.exe, PowerShell 7+ 은 $PSHOME\pwsh.exe
+    $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' }
+             else { Join-Path $PSHOME 'powershell.exe' }
+    $run = Invoke-Native -Passthru {
+        & $psExe -NoProfile -ExecutionPolicy Bypass -File $installerPath
+    }
+    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+    if ($run.ExitCode -ne 0) {
+        # 설치 로그는 -Passthru 로 이미 화면에 출력돼 있다.
+        Stop-Fail "Claude Code 설치 실패 (exit code $($run.ExitCode))"
     }
 
     Update-SessionPath
