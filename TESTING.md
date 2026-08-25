@@ -58,13 +58,13 @@ irm https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.ps1 | ie
 
 테스트 계정을 outside collaborator에서 제거한 상태에서 `repo` 스코프 토큰으로 실행한다.
 
-기대: clone 검증에서 실패하고, 실패 메시지가 원인 후보를 모두 제시한다 — ① 토큰에 `repo` 스코프 미체크 ② 초대 미수락. GitHub는 권한 없는 private repo를 404로 숨기므로 스크립트는 둘을 구분할 수 없다. 한쪽만 지목하면 나머지 절반의 유저를 엉뚱한 곳으로 보낸다.
+기대: 플러그인 설치(marketplace add) 단계에서 실패하고, 실패 메시지가 원인 후보를 모두 제시한다 — ① 토큰에 `repo` 스코프 미체크 ② 초대 미수락. GitHub는 권한 없는 private repo를 404로 숨기므로 스크립트는 둘을 구분할 수 없다. 한쪽만 지목하면 나머지 절반의 유저를 엉뚱한 곳으로 보낸다.
 
 ### T4 · 스코프 없는 토큰의 3회 재입력 루프
 
 스코프 없는 토큰을 입력한다.
 
-기대: `gh auth login` 은 성공하지만(토큰 자체는 유효하다) clone 검증에서 실패하고, 그 자리에서 원인 안내 + 토큰 발급 페이지 재오픈 + PAT 재입력을 제안한다. 2회차에 올바른 토큰을 넣으면 성공한다. 3회 모두 실패하면 안내 문구와 함께 종료한다.
+기대: `gh auth login` 은 성공하지만(토큰 자체는 유효하다) 플러그인 설치에서 실패하고, 그 자리에서 원인 안내 + 토큰 발급 주소 재표시 + PAT 재입력을 제안한다. 2회차에 올바른 토큰을 넣으면 성공한다. 이때 1회차 실패로 marketplace가 반쯤 등록된 상태여도 재시도 경로(`marketplace update`)가 새 자격증명으로 이어받아야 한다. 3회 모두 실패하면 안내 문구와 함께 종료한다.
 
 ### T5 · 잘못된 토큰이 저장된 상태에서 재실행
 
@@ -94,13 +94,13 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 
 깨끗한 상태 + 초대된 계정 + `repo` 스코프 토큰으로 처음부터 끝까지 실행한다.
 
-기대: git 설치 → gh 설치 → PAT 저장 → clone 검증까지 전부 통과하고, 마지막 출력이 Claude Desktop을 열라고 안내한다.
+기대: git 설치 → gh 설치 → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, 마지막 출력이 Claude Desktop을 열라고 안내한다.
 
 ```
-모든 단계 완료. Claude Desktop을 열어 주세요.
+모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다.
 ```
 
-플러그인 설치 명령어는 스크립트가 안내하지 않는다. 그 단계는 별도 안내 경로가 담당한다.
+끝난 뒤 `claude plugin list` 에 `contrl@contrl-harness` 가 enabled로 보이는지, Claude Desktop 새 세션에서 CONTRL 스킬이 로드되는지 확인한다.
 
 ## 검증하지 않는 것
 

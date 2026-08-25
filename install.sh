@@ -3,8 +3,10 @@
 # install.sh — CONTRL 설치 (macOS / Linux)
 #   1. git 설치
 #   2. GitHub CLI(gh) 설치
-#   3. GitHub PAT 저장 + git credential helper 연결
-#   4. 저장소 접근 확인 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
+#   3. Claude Code 설치
+#   4. GitHub PAT 저장 + git credential helper 연결
+#   5. CONTRL 플러그인 설치 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
+#      (플러그인 설치가 저장소 접근 확인을 겸한다 — 별도의 clone 검증은 하지 않는다)
 #
 # Homebrew는 선택 사항이다. 없으면:
 #   - git : Xcode Command Line Tools 로 설치
@@ -19,7 +21,7 @@
 #
 # 개발용 환경변수:
 #   GITHUB_PAT           비대화형 실행 (첫 시도에만 사용)
-#   CONTRL_SKIP_VERIFY   저장소 접근 확인 생략
+#   CONTRL_SKIP_VERIFY   플러그인 설치(저장소 접근 확인) 생략
 #   CONTRL_NO_BREW       brew가 있어도 릴리스 바이너리 사용
 #   INSTALL_PREFIX       brew 없이 gh를 설치할 위치 (기본: $HOME/.local)
 #
@@ -27,6 +29,8 @@
 set -euo pipefail
 
 REPO="cliwant/contrl-harness"
+MARKETPLACE="contrl-harness"     # marketplace.json 의 name
+PLUGIN="contrl"                  # plugin.json 의 name
 INSTALL_PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
 MAX_ATTEMPTS=3
 SCRIPT_URL="https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.sh"
@@ -239,14 +243,31 @@ install_gh() {
   ok "gh 설치 완료 ($(gh --version | head -n1))"
 }
 
-# ── 3. 토큰 입력 ──────────────────────────────────────────────────────
-open_token_page() {
-  info "토큰 발급 페이지를 엽니다. 화면의 초록색 버튼을 눌러 토큰을 만든 뒤 값을 복사하세요."
-  printf '        %s\n' "$TOKEN_URL"
-  if   [[ "$OS" == "Darwin" ]] && have open; then open "$TOKEN_URL" >/dev/null 2>&1 || true
-  elif have xdg-open;                        then xdg-open "$TOKEN_URL" >/dev/null 2>&1 || true
-  else warn "브라우저를 자동으로 열지 못했습니다. 위 주소를 직접 열어 주세요."
+# ── 3. Claude Code 설치 ───────────────────────────────────────────────
+install_claude() {
+  # 공식 네이티브 설치는 $HOME/.local/bin 에 놓인다. 현재 셸 PATH에 없을 수
+  # 있으므로 판정 전에 먼저 추가한다.
+  export PATH="$HOME/.local/bin:$PATH"
+
+  if have claude && claude --version >/dev/null 2>&1; then
+    ok "Claude Code 이미 설치됨 ($(claude --version))"
+    return
   fi
+
+  have curl || die "curl이 필요합니다."
+  info "Claude Code 설치 중..."
+  # 공식 설치 스크립트 — 자동 업데이트되는 네이티브 빌드를 ~/.local/bin 에 설치한다.
+  curl -fsSL https://claude.ai/install.sh | bash || die "Claude Code 설치 실패"
+
+  have claude && claude --version >/dev/null 2>&1 \
+    || die "Claude Code 설치 후에도 claude 명령을 찾지 못했습니다. 새 터미널에서 다시 실행해 보세요."
+  ok "Claude Code 설치 완료 ($(claude --version))"
+}
+
+# ── 4. 토큰 입력 ──────────────────────────────────────────────────────
+show_token_page() {
+  info "아래 주소에서 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
+  printf '        %s\n' "$TOKEN_URL"
 }
 
 # 프롬프트는 stderr로 보낸다 — 이 함수의 stdout은 호출 측이 토큰 값으로 받는다.
@@ -265,7 +286,7 @@ setup_git_credential() {
     || die "git 자격증명 연결에 실패했습니다."
 }
 
-# ── 4. 저장소 접근 확인 ───────────────────────────────────────────────
+# ── 5. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
 # GitHub는 권한 없는 private 저장소를 404로 숨기므로 스코프 누락과 초대 미수락을
 # 구분할 수 없다. 그래서 둘 다 안내한다 — 한쪽만 지목하면 나머지 절반의
 # 사용자를 엉뚱한 곳으로 보내게 된다.
@@ -275,22 +296,28 @@ show_access_failure_causes() {
   printf '        2) 초대 메일을 아직 수락하지 않음 (수락한 뒤 다시 시도)\n'
 }
 
-verify_access() {
-  local tmpdir rc=0
-  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/contrl-verify.XXXXXX")"
-  register_cleanup "$tmpdir"
+# marketplace add/update 가 private 저장소를 clone하므로 별도의 검증 clone이
+# 필요 없다 — 여기가 실패하면 곧 저장소 접근 실패다.
+install_plugin() {
+  # owner/repo 축약형은 기본이 SSH clone 이다. 이 스크립트는 PAT(HTTPS)만
+  # 구성하므로 HTTPS를 강제하고, 자격증명이 통하지 않을 때 git이 사용자명을
+  # 되묻고 멈추는 것도 막는다.
+  export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1
+  export GIT_TERMINAL_PROMPT=0
 
-  info "저장소 접근 확인 중..."
-  # 자격증명이 통하지 않을 때 git이 사용자명을 되묻고 멈추는 것을 막는다.
-  if GIT_TERMINAL_PROMPT=0 git clone --depth 1 --quiet \
-       "https://github.com/$REPO.git" "$tmpdir/repo" >/dev/null 2>&1; then
-    ok "저장소 접근 확인 (HEAD: $(git -C "$tmpdir/repo" rev-parse --short HEAD))"
+  info "CONTRL 플러그인 설치 중..."
+  if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE"; then
+    # 재시도(새 토큰) 경로 — 이미 등록된 marketplace를 새 자격증명으로 갱신
+    claude plugin marketplace update "$MARKETPLACE" >/dev/null 2>&1 || return 1
   else
-    rc=1
+    claude plugin marketplace add "$REPO" >/dev/null 2>&1 || return 1
   fi
 
-  rm -rf "$tmpdir"
-  return $rc
+  claude plugin install "$PLUGIN@$MARKETPLACE" --scope user >/dev/null 2>&1 || return 1
+  claude plugin list 2>/dev/null | grep -q "$PLUGIN@$MARKETPLACE" \
+    || return 1
+
+  ok "CONTRL 플러그인 설치 완료 ($PLUGIN@$MARKETPLACE)"
 }
 
 # 저장된 인증으로 먼저 시도하고, 실패하면 토큰을 다시 받아 최대 MAX_ATTEMPTS회 재시도한다.
@@ -303,10 +330,10 @@ ensure_access() {
     ok "GitHub 인증 이미 구성됨 (사용자: $(gh api user --jq .login 2>/dev/null || echo unknown))"
     setup_git_credential
     if [[ "$SKIP_VERIFY" -eq 1 ]]; then
-      warn "CONTRL_SKIP_VERIFY: 저장소 접근 확인 생략"
+      warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
       return
     fi
-    if verify_access; then return; fi
+    if install_plugin; then return; fi
     show_access_failure_causes
     info "새 토큰으로 다시 시도합니다."
   fi
@@ -317,7 +344,7 @@ ensure_access() {
     if [[ $attempt -eq 1 && -n "${GITHUB_PAT:-}" ]]; then
       token="$GITHUB_PAT"
     else
-      open_token_page
+      show_token_page
       token="$(read_token)"
     fi
 
@@ -337,10 +364,10 @@ ensure_access() {
     setup_git_credential
 
     if [[ "$SKIP_VERIFY" -eq 1 ]]; then
-      warn "CONTRL_SKIP_VERIFY: 저장소 접근 확인 생략"
+      warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
       return
     fi
-    if verify_access; then return; fi
+    if install_plugin; then return; fi
 
     show_access_failure_causes
     if [[ $attempt -lt $MAX_ATTEMPTS ]]; then
@@ -355,7 +382,8 @@ ensure_access() {
 # ── 실행 ──────────────────────────────────────────────────────────────
 install_git
 install_gh
+install_claude
 ensure_access
 
 printf '\n'
-ok "모든 단계 완료. Claude Desktop을 열어 주세요."
+ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."

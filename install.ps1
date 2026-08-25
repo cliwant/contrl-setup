@@ -3,8 +3,10 @@
 
       1. git 설치 (winget)
       2. GitHub CLI(gh) 설치 (winget)
-      3. GitHub PAT 저장 + git credential helper 연결
-      4. 저장소 접근 확인 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
+      3. Claude Code 설치
+      4. GitHub PAT 저장 + git credential helper 연결
+      5. CONTRL 플러그인 설치 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
+         (플러그인 설치가 저장소 접근 확인을 겸한다 — 별도의 clone 검증은 하지 않는다)
 
     사용법:
       irm https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.ps1 | iex
@@ -16,7 +18,7 @@
 
     파라미터 대신 환경변수를 쓴다 — `irm | iex` 형태로는 파라미터를 넘길 수 없다.
       $env:GITHUB_PAT           비대화형 실행 (첫 시도에만 사용)
-      $env:CONTRL_SKIP_VERIFY   저장소 접근 확인 생략
+      $env:CONTRL_SKIP_VERIFY   플러그인 설치(저장소 접근 확인) 생략
 #>
 
 # 주의: 네이티브 명령(gh/git/winget)은 stderr 출력이 ErrorRecord로 변환되므로
@@ -25,6 +27,8 @@
 $ErrorActionPreference = 'Stop'
 
 $Repo        = 'cliwant/contrl-harness'
+$Marketplace = 'contrl-harness'   # marketplace.json 의 name
+$Plugin      = 'contrl'           # plugin.json 의 name
 $MaxAttempts = 3
 # scopes 파라미터로 repo 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
 $TokenUrl    = 'https://github.com/settings/tokens/new?scopes=repo&description=CONTRL%20harness'
@@ -138,7 +142,33 @@ function Install-Gh {
     Write-Ok "gh 설치 완료 ($(Get-GhVersion))"
 }
 
-# ── 3. 토큰 입력 ──────────────────────────────────────────────────────
+# ── 3. Claude Code 설치 ───────────────────────────────────────────────
+function Install-Claude {
+    Update-SessionPath
+    if (Test-Command 'claude') {
+        $v = (Invoke-Native { claude --version }).Output
+        Write-Ok "Claude Code 이미 설치됨 ($v)"
+        return
+    }
+
+    Write-Info "Claude Code 설치 중..."
+    # 공식 설치 스크립트 — 자동 업데이트되는 네이티브 빌드를 설치한다.
+    try {
+        Invoke-Expression (Invoke-RestMethod 'https://claude.ai/install.ps1')
+    }
+    catch {
+        Stop-Fail "Claude Code 설치 실패`n        $($_.Exception.Message)"
+    }
+
+    Update-SessionPath
+    if (-not (Test-Command 'claude')) {
+        Stop-Fail "Claude Code 설치 후에도 claude 명령을 찾지 못했습니다. 새 PowerShell 창을 열고 다시 실행해 보세요."
+    }
+    $v = (Invoke-Native { claude --version }).Output
+    Write-Ok "Claude Code 설치 완료 ($v)"
+}
+
+# ── 4. 토큰 입력 ──────────────────────────────────────────────────────
 function ConvertFrom-SecureStringPlain {
     param([Parameter(Mandatory)][System.Security.SecureString]$Secure)
     $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
@@ -146,11 +176,9 @@ function ConvertFrom-SecureStringPlain {
     finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
-function Open-TokenPage {
-    Write-Info "토큰 발급 페이지를 엽니다. 화면의 초록색 버튼을 눌러 토큰을 만든 뒤 값을 복사하세요."
+function Show-TokenPage {
+    Write-Info "아래 주소에서 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
     Write-Host "        $TokenUrl" -ForegroundColor DarkGray
-    try { Start-Process $TokenUrl | Out-Null }
-    catch { Write-Warn "브라우저를 자동으로 열지 못했습니다. 위 주소를 직접 열어 주세요." }
 }
 
 function Read-Token {
@@ -165,7 +193,7 @@ function Set-GitCredentialHelper {
     }
 }
 
-# ── 4. 저장소 접근 확인 ───────────────────────────────────────────────
+# ── 5. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
 # GitHub는 권한 없는 private 저장소를 404로 숨기므로 스코프 누락과 초대 미수락을
 # 구분할 수 없다. 그래서 둘 다 안내한다 — 한쪽만 지목하면 나머지 절반의
 # 사용자를 엉뚱한 곳으로 보내게 된다.
@@ -175,31 +203,36 @@ function Show-AccessFailureCauses {
     Write-Host "        2) 초대 메일을 아직 수락하지 않음 (수락한 뒤 다시 시도)" -ForegroundColor Yellow
 }
 
-function Test-RepoAccess {
-    $tmpRoot = Join-Path $env:TEMP ("contrl-verify-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
-    $tmpRepo = Join-Path $tmpRoot 'repo'
-    New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
-
+# marketplace add/update 가 private 저장소를 clone하므로 별도의 검증 clone이
+# 필요 없다 — 여기가 실패하면 곧 저장소 접근 실패다.
+function Install-Plugin {
+    # owner/repo 축약형은 기본이 SSH clone 이다. 이 스크립트는 PAT(HTTPS)만
+    # 구성하므로 HTTPS를 강제하고, 자격증명이 통하지 않을 때 git이 사용자명을
+    # 되묻고 멈추는 것도 막는다.
+    $env:CLAUDE_CODE_PLUGIN_PREFER_HTTPS = '1'
+    $env:GIT_TERMINAL_PROMPT = '0'
     try {
-        Write-Info "저장소 접근 확인 중..."
-        # 자격증명이 통하지 않을 때 git이 사용자명을 되묻고 멈추는 것을 막는다.
-        $env:GIT_TERMINAL_PROMPT = '0'
-        $clone = Invoke-Native { git clone --depth 1 --quiet "https://github.com/$Repo.git" $tmpRepo }
-        if ($clone.ExitCode -ne 0) { return $false }
+        Write-Info "CONTRL 플러그인 설치 중..."
 
-        $head = (Invoke-Native { git -C $tmpRepo rev-parse --short HEAD }).Output
-        Write-Ok "저장소 접근 확인 (HEAD: $head)"
+        $list = Invoke-Native { claude plugin marketplace list }
+        if ($list.ExitCode -eq 0 -and $list.Output -match [regex]::Escape($Marketplace)) {
+            # 재시도(새 토큰) 경로 — 이미 등록된 marketplace를 새 자격증명으로 갱신
+            if ((Invoke-Native { claude plugin marketplace update $Marketplace }).ExitCode -ne 0) { return $false }
+        }
+        else {
+            if ((Invoke-Native { claude plugin marketplace add $Repo }).ExitCode -ne 0) { return $false }
+        }
+
+        if ((Invoke-Native { claude plugin install "$Plugin@$Marketplace" --scope user }).ExitCode -ne 0) { return $false }
+
+        $installed = Invoke-Native { claude plugin list }
+        if ($installed.Output -notmatch [regex]::Escape("$Plugin@$Marketplace")) { return $false }
+
+        Write-Ok "CONTRL 플러그인 설치 완료 ($Plugin@$Marketplace)"
         return $true
     }
     finally {
         Remove-Item Env:\GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue
-        # 성공/실패/중단 어느 경우든 임시 디렉토리 정리
-        if (Test-Path $tmpRoot) {
-            # .git 내부 읽기 전용 속성 때문에 삭제가 막히는 경우 대비
-            Get-ChildItem -Path $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue |
-                ForEach-Object { try { $_.Attributes = 'Normal' } catch { } }
-            Remove-Item -Path $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
     }
 }
 
@@ -214,10 +247,10 @@ function Confirm-RepoAccess {
         Write-Ok "GitHub 인증 이미 구성됨 (사용자: $who)"
         Set-GitCredentialHelper
         if ($SkipVerify) {
-            Write-Warn "CONTRL_SKIP_VERIFY: 저장소 접근 확인 생략"
+            Write-Warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
             return
         }
-        if (Test-RepoAccess) { return }
+        if (Install-Plugin) { return }
         Show-AccessFailureCauses
         Write-Info "새 토큰으로 다시 시도합니다."
     }
@@ -227,7 +260,7 @@ function Confirm-RepoAccess {
             $token = $envToken
         }
         else {
-            Open-TokenPage
+            Show-TokenPage
             $token = Read-Token
         }
 
@@ -253,10 +286,10 @@ function Confirm-RepoAccess {
         Set-GitCredentialHelper
 
         if ($SkipVerify) {
-            Write-Warn "CONTRL_SKIP_VERIFY: 저장소 접근 확인 생략"
+            Write-Warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
             return
         }
-        if (Test-RepoAccess) { return }
+        if (Install-Plugin) { return }
 
         Show-AccessFailureCauses
         if ($attempt -lt $MaxAttempts) {
@@ -270,7 +303,8 @@ function Confirm-RepoAccess {
 # ── 실행 ──────────────────────────────────────────────────────────────
 Install-Git
 Install-Gh
+Install-Claude
 Confirm-RepoAccess
 
 Write-Host ''
-Write-Ok "모든 단계 완료. Claude Desktop을 열어 주세요."
+Write-Ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
