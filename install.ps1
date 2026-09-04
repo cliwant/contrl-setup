@@ -30,8 +30,8 @@ $Repo        = 'cliwant/contrl-harness'
 $Marketplace = 'contrl-harness'   # marketplace.json 의 name
 $Plugin      = 'contrl'           # plugin.json 의 name
 $MaxAttempts = 3
-# scopes 파라미터로 repo 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
-$TokenUrl    = 'https://github.com/settings/tokens/new?scopes=repo&description=CONTRL%20harness'
+# scopes 파라미터로 repo·admin:org 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
+$TokenUrl    = 'https://github.com/settings/tokens/new?scopes=repo,admin:org&description=CONTRL%20harness&default_expires_at=none'
 $SkipVerify  = -not [string]::IsNullOrWhiteSpace($env:CONTRL_SKIP_VERIFY)
 
 # ── 로깅 ──────────────────────────────────────────────────────────────
@@ -244,9 +244,21 @@ function ConvertFrom-SecureStringPlain {
     finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
+# 브라우저를 직접 연다 — 터미널에서 긴 주소를 복사해 옮기는 단계가 빠진다.
+# 기본 브라우저가 없거나 열기에 실패하면 주소를 그대로 보여준다.
+function Open-Url {
+    param([string]$Url)
+    try { Start-Process $Url -ErrorAction Stop; $true } catch { $false }
+}
+
 function Show-TokenPage {
-    Write-Info "아래 주소에서 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
-    Write-Host "        $TokenUrl" -ForegroundColor DarkGray
+    if (Open-Url $TokenUrl) {
+        Write-Info "브라우저에 토큰 발급 페이지를 열었습니다. 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
+        Write-Host "        열리지 않으면 직접 접속: $TokenUrl" -ForegroundColor DarkGray
+    } else {
+        Write-Info "아래 주소에서 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
+        Write-Host "        $TokenUrl" -ForegroundColor DarkGray
+    }
 }
 
 function Read-Token {
@@ -368,6 +380,20 @@ function Confirm-RepoAccess {
     Stop-Fail "$MaxAttempts회 모두 실패했습니다. 위 두 가지를 확인한 뒤 같은 명령어를 다시 실행하거나,`n        화면에 나온 메시지를 그대로 담당자에게 전달해 주세요."
 }
 
+# ── 5. 마무리 ─────────────────────────────────────────────────────────
+# 설치가 끝나면 Claude Desktop을 바로 띄운다. 앱이 없거나 실행이 막히면
+# 조용히 실패하고 직접 열라는 안내로 대신한다. 이미 실행 중이면 새로 띄우지
+# 않고 앞으로 가져온다.
+function Open-ClaudeDesktop {
+    # 공식 설치 프로그램은 %LOCALAPPDATA%\AnthropicClaude 에 둔다.
+    $exe = Join-Path $env:LOCALAPPDATA 'AnthropicClaude\claude.exe'
+    if (Test-Path $exe) {
+        try { Start-Process $exe -ErrorAction Stop; return $true } catch { }
+    }
+    # 다른 경로(Store 설치 등)는 앱이 등록한 claude:// 프로토콜로 연다.
+    try { Start-Process 'claude://' -ErrorAction Stop; $true } catch { $false }
+}
+
 # ── 실행 ──────────────────────────────────────────────────────────────
 # Stop-Fail의 throw를 여기서 받는다. exit를 쓰지 않으므로 `irm | iex` 로 실행한
 # 사용자 터미널이 닫히지 않고, 실패 메시지가 화면에 남는다.
@@ -379,7 +405,11 @@ try {
     Confirm-RepoAccess
 
     Write-Host ''
-    Write-Ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+    if (Open-ClaudeDesktop) {
+        Write-Ok "모든 단계 완료. Claude Desktop을 열었습니다. CONTRL 플러그인이 준비돼 있습니다."
+    } else {
+        Write-Ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+    }
 }
 catch {
     if ($_.FullyQualifiedErrorId -notmatch 'CONTRL-INSTALL-FAILED') {

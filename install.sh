@@ -34,8 +34,8 @@ PLUGIN="contrl"                  # plugin.json 의 name
 INSTALL_PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
 MAX_ATTEMPTS=3
 SCRIPT_URL="https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.sh"
-# scopes 파라미터로 repo 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
-TOKEN_URL="https://github.com/settings/tokens/new?scopes=repo&description=CONTRL%20harness"
+# scopes 파라미터로 repo·admin:org 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
+TOKEN_URL="https://github.com/settings/tokens/new?scopes=repo,admin:org&description=CONTRL%20harness&default_expires_at=none"
 
 SKIP_VERIFY=0; [[ -n "${CONTRL_SKIP_VERIFY:-}" ]] && SKIP_VERIFY=1
 NO_BREW=0;     [[ -n "${CONTRL_NO_BREW:-}"     ]] && NO_BREW=1
@@ -265,9 +265,24 @@ install_claude() {
 }
 
 # ── 4. 토큰 입력 ──────────────────────────────────────────────────────
+# 브라우저를 직접 연다 — 터미널에서 긴 주소를 복사해 옮기는 단계가 빠진다.
+# GUI가 없거나(SSH, 컨테이너) 열기에 실패하면 주소를 그대로 보여준다.
+open_url() {
+  local url="$1"
+  case "$(uname -s)" in
+    Darwin) open "$url" >/dev/null 2>&1 ;;
+    *)      [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && have xdg-open && xdg-open "$url" >/dev/null 2>&1 ;;
+  esac
+}
+
 show_token_page() {
-  info "아래 주소에서 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
-  printf '        %s\n' "$TOKEN_URL"
+  if open_url "$TOKEN_URL"; then
+    info "브라우저에 토큰 발급 페이지를 열었습니다. 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
+    printf '        열리지 않으면 직접 접속: %s\n' "$TOKEN_URL"
+  else
+    info "아래 주소에서 토큰을 만든 뒤 값을 복사하세요. (화면의 초록색 버튼)"
+    printf '        %s\n' "$TOKEN_URL"
+  fi
 }
 
 # 프롬프트는 stderr로 보낸다 — 이 함수의 stdout은 호출 측이 토큰 값으로 받는다.
@@ -379,6 +394,17 @@ ensure_access() {
         화면에 나온 메시지를 그대로 담당자에게 전달해 주세요."
 }
 
+# ── 5. 마무리 ─────────────────────────────────────────────────────────
+# 설치가 끝나면 Claude Desktop을 바로 띄운다. 앱이 없거나 GUI가 아니면(SSH,
+# 컨테이너, Linux) 조용히 실패하고 직접 열라는 안내로 대신한다.
+# 이미 실행 중이면 새로 띄우지 않고 앞으로 가져온다.
+open_claude_desktop() {
+  case "$(uname -s)" in
+    Darwin) open -b com.anthropic.claudefordesktop >/dev/null 2>&1 ;;
+    *)      return 1 ;;   # Linux는 공식 Desktop 앱이 없다
+  esac
+}
+
 # ── 실행 ──────────────────────────────────────────────────────────────
 install_git
 install_gh
@@ -386,4 +412,8 @@ install_claude
 ensure_access
 
 printf '\n'
-ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+if open_claude_desktop; then
+  ok "모든 단계 완료. Claude Desktop을 열었습니다. CONTRL 플러그인이 준비돼 있습니다."
+else
+  ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+fi
