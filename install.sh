@@ -395,14 +395,33 @@ ensure_access() {
 }
 
 # ── 5. 마무리 ─────────────────────────────────────────────────────────
-# 설치가 끝나면 Claude Desktop을 바로 띄운다. 앱이 없거나 GUI가 아니면(SSH,
-# 컨테이너, Linux) 조용히 실패하고 직접 열라는 안내로 대신한다.
-# 이미 실행 중이면 새로 띄우지 않고 앞으로 가져온다.
+# 설치가 끝나면 Claude Desktop의 Claude Code 화면을 바로 띄우고, 입력창에
+# /contrl:setup 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
+# claude:// 딥링크는 Desktop 앱이 등록하므로, 앱이 없거나 GUI가 아니면
+# (SSH, 컨테이너, Linux) 열리지 않는다.
+#
+# 이 단계는 편의 기능이다. 어떤 이유로 실패해도 설치 결과에는 영향이 없어야
+# 하므로, 함수는 절대 스크립트를 중단시키지 않고 0/1만 돌려준다. 호출 측은
+# 성공 메시지를 먼저 출력한 뒤 이 함수를 부르고, 실패하면 직접 열라는 안내로
+# 대신한다. 이미 실행 중이면 새로 띄우지 않고 앞으로 가져온다.
+# q= 값은 URL 인코딩된 "/contrl:setup".
+#
+# 검증 상태: macOS에서만 실제 확인했다(Desktop 1.46388.1). Windows는 install.ps1 참고.
+SETUP_DEEPLINK='claude://code/new?q=%2Fcontrl%3Asetup&source=url_external'
+
 open_claude_desktop() {
-  case "$(uname -s)" in
-    Darwin) open -b com.anthropic.claudefordesktop >/dev/null 2>&1 ;;
-    *)      return 1 ;;   # Linux는 공식 Desktop 앱이 없다
-  esac
+  # 서브셸에서 돌려 set -e·trap·환경 변화가 바깥으로 새지 않게 한다.
+  (
+    set +e
+    case "$(uname -s 2>/dev/null)" in
+      Darwin)
+        have open || exit 1
+        open "$SETUP_DEEPLINK" >/dev/null 2>&1
+        ;;
+      *) exit 1 ;;   # Linux는 공식 Desktop 앱이 없다
+    esac
+  ) 2>/dev/null || return 1
+  return 0
 }
 
 # ── 실행 ──────────────────────────────────────────────────────────────
@@ -412,8 +431,11 @@ install_claude
 ensure_access
 
 printf '\n'
+ok "모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다."
+
+# 아래는 실패해도 무방한 편의 단계 — 어떤 결과든 안내 문구만 달라진다.
 if open_claude_desktop; then
-  ok "모든 단계 완료. Claude Desktop을 열었습니다. CONTRL 플러그인이 준비돼 있습니다."
+  info "Claude Desktop을 열었습니다. 입력창의 /contrl:setup 을 Enter로 실행하세요."
 else
-  ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+  info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 /contrl:setup 을 입력해 실행하세요."
 fi

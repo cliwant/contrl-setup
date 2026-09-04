@@ -94,13 +94,28 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 
 깨끗한 상태 + 초대된 계정 + `repo` 스코프 토큰으로 처음부터 끝까지 실행한다.
 
-기대: git 설치 → gh 설치 → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, 마지막 출력이 Claude Desktop을 열라고 안내한다.
+기대: git 설치 → gh 설치 → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup` 이 채워져 있다(전송되지는 않는다). 앱이 없으면 직접 열어 입력하라는 안내로 대체되며, 어느 쪽이든 그 앞줄의 "모든 단계 완료" 는 반드시 출력된다.
 
 ```
-모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다.
+모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다.
+[INFO]  Claude Desktop을 열었습니다. 입력창의 /contrl:setup 을 Enter로 실행하세요.
 ```
 
 끝난 뒤 `claude plugin list` 에 `contrl@contrl-harness` 가 enabled로 보이는지, Claude Desktop 새 세션에서 CONTRL 스킬이 로드되는지 확인한다.
+
+### T9 · Claude Desktop 자동 열기 (Windows — 아직 미검증)
+
+**이 항목은 아직 한 번도 실제로 실행해 보지 못했다.** 마무리 단계의 `claude://code/new?q=…` 딥링크는 macOS(Desktop 1.46388.1)에서만 동작을 확인했고, `install.ps1` 의 `Open-ClaudeDesktop` 은 PowerShell 문법 검사만 통과한 상태다.
+
+Claude Desktop이 설치된 Windows에서 T8을 끝까지 돌리고 확인한다.
+
+기대: Claude Desktop이 앞으로 오고 Claude Code 새 세션 입력창에 `/contrl:setup` 이 채워져 있다(전송은 되지 않는다). 아래 세 경우 모두 "모든 단계 완료" 가 먼저 출력되고 터미널이 닫히지 않아야 한다.
+
+- Desktop 설치됨 → `[INFO]  Claude Desktop을 열었습니다. …`
+- Desktop 미설치(프로토콜 미등록) → `[INFO]  Claude Desktop을 직접 연 뒤, …`
+- EDR/AppLocker가 Start-Process 를 막는 관리형 PC → 위 미설치와 같은 안내
+
+확인되지 않은 것: 프로토콜이 없을 때 Windows가 예외 대신 "앱 선택" 대화상자를 띄우는지, Desktop이 꺼진 상태(cold start)에서도 프리필이 유지되는지.
 
 ## 검증하지 않는 것
 

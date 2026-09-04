@@ -1,6 +1,6 @@
 # CONTRL 환경 준비
 
-제안서 자동화 harness를 쓰기 위한 환경을 한 번에 준비합니다. git · GitHub CLI · Claude Code를 설치하고, GitHub 접근 토큰을 저장한 뒤, CONTRL 플러그인까지 설치를 마칩니다. 설치가 끝나면 Claude Desktop을 열어 바로 쓰면 됩니다.
+제안서 자동화 harness를 쓰기 위한 환경을 한 번에 준비합니다. git · GitHub CLI · Claude Code를 설치하고, GitHub 접근 토큰을 저장한 뒤, CONTRL 플러그인까지 설치를 마칩니다. 설치가 끝나면 Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup` 이 채워져 있습니다. Enter를 눌러 실행하면 됩니다. 자동으로 열리지 않으면 Claude Desktop을 직접 열어 입력하세요. (자동 열기는 macOS에서만 확인했고 Windows는 아직 검증 전입니다.)
 
 ## 시작하기 전에
 

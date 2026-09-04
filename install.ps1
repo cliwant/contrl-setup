@@ -381,17 +381,35 @@ function Confirm-RepoAccess {
 }
 
 # ── 5. 마무리 ─────────────────────────────────────────────────────────
-# 설치가 끝나면 Claude Desktop을 바로 띄운다. 앱이 없거나 실행이 막히면
-# 조용히 실패하고 직접 열라는 안내로 대신한다. 이미 실행 중이면 새로 띄우지
-# 않고 앞으로 가져온다.
+# 설치가 끝나면 Claude Desktop의 Claude Code 화면을 바로 띄우고, 입력창에
+# /contrl:setup 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
+# claude:// 딥링크는 Desktop 앱이 등록하므로, 앱이 없거나 실행이 막히면
+# (EDR/AppLocker, 프로토콜 미등록) 열리지 않는다.
+#
+# 이 단계는 편의 기능이다. 어떤 이유로 실패해도 설치 결과에는 영향이 없어야
+# 하므로, 함수는 예외를 밖으로 던지지 않고 $true/$false 만 돌려준다.
+# 호출 측은 성공 메시지를 먼저 출력한 뒤 이 함수를 부르고, 실패하면 직접
+# 열라는 안내로 대신한다. 이미 실행 중이면 새로 띄우지 않고 앞으로 가져온다.
+# q= 값은 URL 인코딩된 "/contrl:setup".
+#
+# ※ 검증 상태: Windows에서는 아직 실제로 테스트하지 못했다. 딥링크 동작은
+#    macOS(Desktop 1.46388.1)에서만 확인했고, Windows는 문법 검사만 통과한
+#    상태다. TESTING.md T9 시나리오로 확인이 필요하다.
+$SetupDeepLink = 'claude://code/new?q=%2Fcontrl%3Asetup&source=url_external'
+
 function Open-ClaudeDesktop {
-    # 공식 설치 프로그램은 %LOCALAPPDATA%\AnthropicClaude 에 둔다.
-    $exe = Join-Path $env:LOCALAPPDATA 'AnthropicClaude\claude.exe'
-    if (Test-Path $exe) {
-        try { Start-Process $exe -ErrorAction Stop; return $true } catch { }
+    $opened = $false
+    try {
+        # 전역 $ErrorActionPreference = 'Stop' 이라 오류는 모두 예외로 오고,
+        # 아래 catch 가 전부 받는다. 프로토콜 미등록·정책 차단·기타 예외 모두
+        # $false 로 귀결된다.
+        Start-Process $SetupDeepLink -ErrorAction Stop
+        $opened = $true
     }
-    # 다른 경로(Store 설치 등)는 앱이 등록한 claude:// 프로토콜로 연다.
-    try { Start-Process 'claude://' -ErrorAction Stop; $true } catch { $false }
+    catch {
+        $opened = $false
+    }
+    return $opened
 }
 
 # ── 실행 ──────────────────────────────────────────────────────────────
@@ -405,10 +423,13 @@ try {
     Confirm-RepoAccess
 
     Write-Host ''
+    Write-Ok "모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다."
+
+    # 아래는 실패해도 무방한 편의 단계 — 어떤 결과든 안내 문구만 달라진다.
     if (Open-ClaudeDesktop) {
-        Write-Ok "모든 단계 완료. Claude Desktop을 열었습니다. CONTRL 플러그인이 준비돼 있습니다."
+        Write-Info "Claude Desktop을 열었습니다. 입력창의 /contrl:setup 을 Enter로 실행하세요."
     } else {
-        Write-Ok "모든 단계 완료. Claude Desktop을 열면 CONTRL 플러그인이 준비돼 있습니다."
+        Write-Info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 /contrl:setup 을 입력해 실행하세요."
     }
 }
 catch {
