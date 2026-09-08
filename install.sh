@@ -239,8 +239,11 @@ install_gh() {
       ;;
   esac
 
-  have gh || die "gh 설치 실패"
-  ok "gh 설치 완료 ($(gh --version | head -n1))"
+  if have gh; then
+    ok "gh 설치 완료 ($(gh --version | head -n1))"
+  else
+    warn "gh 설치에 실패했습니다. gh 없이 계속 진행합니다 (토큰 저장 단계는 건너뜁니다)."
+  fi
 }
 
 # ── 3. Claude Code 설치 ───────────────────────────────────────────────
@@ -296,9 +299,12 @@ read_token() {
   printf '%s' "$t"
 }
 
+# 실패해도 멈추지 않는다 — 저장소가 공개이거나 다른 credential helper가
+# 이미 있으면 플러그인 설치는 그대로 성공한다. 판정은 install_plugin이 한다.
 setup_git_credential() {
+  have gh || return 0
   gh auth setup-git --hostname github.com >/dev/null 2>&1 \
-    || die "git 자격증명 연결에 실패했습니다."
+    || warn "git 자격증명 연결에 실패했습니다. 그대로 플러그인 설치를 시도합니다."
 }
 
 # ── 5. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
@@ -335,22 +341,27 @@ install_plugin() {
   ok "CONTRL 플러그인 설치 완료 ($PLUGIN@$MARKETPLACE)"
 }
 
-# 저장된 인증으로 먼저 시도하고, 실패하면 토큰을 다시 받아 최대 MAX_ATTEMPTS회 재시도한다.
-# 저장된 토큰이 '유효하지만 이 저장소에는 권한이 없는' 상태여도 gh auth status는 성공하므로,
-# 인증 여부만 보고 건너뛰면 새 토큰을 만들어도 반영되지 않는 상태에 갇힌다.
+# 인증 없이 먼저 설치를 시도하고, 실패할 때만 토큰을 받아 최대 MAX_ATTEMPTS회 재시도한다.
+# gh 로그인·credential helper 연결은 실패해도 멈추지 않는다 — 저장소가 공개이거나
+# 자격증명이 다른 경로로 이미 있으면 설치는 그대로 통과하기 때문이다.
+# 성공/실패 판정은 오직 install_plugin 결과로만 한다.
 ensure_access() {
   local attempt=0 token=""
 
-  if [[ -z "${GITHUB_PAT:-}" ]] && gh auth status >/dev/null 2>&1; then
-    ok "GitHub 인증 이미 구성됨 (사용자: $(gh api user --jq .login 2>/dev/null || echo unknown))"
-    setup_git_credential
-    if [[ "$SKIP_VERIFY" -eq 1 ]]; then
-      warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
-      return
+  if [[ "$SKIP_VERIFY" -eq 1 ]]; then
+    warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
+    return
+  fi
+
+  # 0. 현재 상태 그대로 설치 시도 (공개 저장소 / 기존 gh 인증 / 기존 credential helper)
+  if [[ -z "${GITHUB_PAT:-}" ]]; then
+    if have gh && gh auth status >/dev/null 2>&1; then
+      ok "GitHub 인증 이미 구성됨 (사용자: $(gh api user --jq .login 2>/dev/null || echo unknown))"
     fi
+    setup_git_credential
     if install_plugin; then return; fi
     show_access_failure_causes
-    info "새 토큰으로 다시 시도합니다."
+    info "GitHub 토큰으로 다시 시도합니다."
   fi
 
   while [[ $attempt -lt $MAX_ATTEMPTS ]]; do
@@ -368,20 +379,19 @@ ensure_access() {
       continue
     fi
 
-    info "토큰 저장 중..."
-    if ! printf '%s' "$token" | gh auth login --hostname github.com --git-protocol https --with-token >/dev/null 2>&1; then
-      token=""
-      warn "토큰이 유효하지 않습니다. 값을 다시 확인해 주세요. ($attempt/$MAX_ATTEMPTS)"
-      continue
+    if have gh; then
+      info "토큰 저장 중..."
+      if printf '%s' "$token" | gh auth login --hostname github.com --git-protocol https --with-token >/dev/null 2>&1; then
+        ok "토큰 저장 완료 (사용자: $(gh api user --jq .login 2>/dev/null || echo unknown))"
+        setup_git_credential
+      else
+        warn "gh 토큰 저장에 실패했습니다. 그대로 플러그인 설치를 시도합니다. ($attempt/$MAX_ATTEMPTS)"
+      fi
+    else
+      warn "gh가 없어 토큰을 저장하지 못합니다. 그대로 플러그인 설치를 시도합니다."
     fi
     token=""
-    ok "토큰 저장 완료 (사용자: $(gh api user --jq .login 2>/dev/null || echo unknown))"
-    setup_git_credential
 
-    if [[ "$SKIP_VERIFY" -eq 1 ]]; then
-      warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
-      return
-    fi
     if install_plugin; then return; fi
 
     show_access_failure_causes
@@ -396,7 +406,7 @@ ensure_access() {
 
 # ── 5. 마무리 ─────────────────────────────────────────────────────────
 # 설치가 끝나면 Claude Desktop의 Claude Code 화면을 바로 띄우고, 입력창에
-# /contrl:setup 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
+# "/contrl:setup 한국어로 설치 진행" 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
 # claude:// 딥링크는 Desktop 앱이 등록하므로, 앱이 없거나 GUI가 아니면
 # (SSH, 컨테이너, Linux) 열리지 않는다.
 #
@@ -404,10 +414,10 @@ ensure_access() {
 # 하므로, 함수는 절대 스크립트를 중단시키지 않고 0/1만 돌려준다. 호출 측은
 # 성공 메시지를 먼저 출력한 뒤 이 함수를 부르고, 실패하면 직접 열라는 안내로
 # 대신한다. 이미 실행 중이면 새로 띄우지 않고 앞으로 가져온다.
-# q= 값은 URL 인코딩된 "/contrl:setup".
+# q= 값은 URL 인코딩된 "/contrl:setup 한국어로 설치 진행" (한글은 UTF-8 퍼센트 인코딩).
 #
 # 검증 상태: macOS에서만 실제 확인했다(Desktop 1.46388.1). Windows는 install.ps1 참고.
-SETUP_DEEPLINK='claude://code/new?q=%2Fcontrl%3Asetup&source=url_external'
+SETUP_DEEPLINK='claude://code/new?q=%2Fcontrl%3Asetup%20%ED%95%9C%EA%B5%AD%EC%96%B4%EB%A1%9C%20%EC%84%A4%EC%B9%98%20%EC%A7%84%ED%96%89&source=url_external'
 
 open_claude_desktop() {
   # 서브셸에서 돌려 set -e·trap·환경 변화가 바깥으로 새지 않게 한다.
@@ -435,7 +445,7 @@ ok "모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다."
 
 # 아래는 실패해도 무방한 편의 단계 — 어떤 결과든 안내 문구만 달라진다.
 if open_claude_desktop; then
-  info "Claude Desktop을 열었습니다. 입력창의 /contrl:setup 을 Enter로 실행하세요."
+  info "Claude Desktop을 열었습니다. 입력창에 채워진 '/contrl:setup 한국어로 설치 진행' 을 Enter로 실행하세요."
 else
-  info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 /contrl:setup 을 입력해 실행하세요."
+  info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 '/contrl:setup 한국어로 설치 진행' 을 입력해 실행하세요."
 fi

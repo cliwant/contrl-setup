@@ -1,6 +1,6 @@
 # CONTRL 환경 준비
 
-제안서 자동화 harness를 쓰기 위한 환경을 한 번에 준비합니다. git · GitHub CLI · Claude Code를 설치하고, GitHub 접근 토큰을 저장한 뒤, CONTRL 플러그인까지 설치를 마칩니다. 설치가 끝나면 Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup` 이 채워져 있습니다. Enter를 눌러 실행하면 됩니다. 자동으로 열리지 않으면 Claude Desktop을 직접 열어 입력하세요. (자동 열기는 macOS에서만 확인했고 Windows는 아직 검증 전입니다.)
+제안서 자동화 harness를 쓰기 위한 환경을 한 번에 준비합니다. git · GitHub CLI · Claude Code를 설치하고, GitHub 접근 토큰을 저장한 뒤, CONTRL 플러그인까지 설치를 마칩니다. 설치가 끝나면 Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup 한국어로 설치 진행` 이 채워져 있습니다. Enter를 눌러 실행하면 됩니다. 자동으로 열리지 않으면 Claude Desktop을 직접 열어 입력하세요. (자동 열기는 macOS에서만 확인했고 Windows는 아직 검증 전입니다.)
 
 ## 시작하기 전에
 
@@ -24,7 +24,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/cliwant/contrl-setup/mai
 irm https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.ps1 | iex
 ```
 
-실행 중 GitHub 토큰을 입력하는 화면이 나옵니다. 화면에 표시된 토큰 발급 주소를 브라우저에서 열어 토큰을 만들고, 생성된 값을 복사해 붙여넣으면 됩니다. 입력한 값은 보안상 화면에 표시되지 않습니다.
+스크립트는 먼저 토큰 없이 플러그인 설치를 시도하고, 저장소에 접근하지 못할 때만 GitHub 토큰을 입력하는 화면을 띄웁니다. 화면에 표시된 토큰 발급 주소를 브라우저에서 열어 토큰을 만들고, 생성된 값을 복사해 붙여넣으면 됩니다. 입력한 값은 보안상 화면에 표시되지 않습니다.
 
 ## 잘 안 될 때
 

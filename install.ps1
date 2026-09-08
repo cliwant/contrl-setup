@@ -146,7 +146,8 @@ function Install-Gh {
     }
     Install-WingetPackage -Id 'GitHub.cli' -DisplayName 'GitHub CLI'
     if (-not (Test-Command 'gh')) {
-        Stop-Fail "gh 설치 실패 — 새 PowerShell 창을 열고 다시 실행해 보세요."
+        Write-Warn "gh 설치에 실패했습니다. gh 없이 계속 진행합니다 (토큰 저장 단계는 건너뜁니다)."
+        return
     }
     Write-Ok "gh 설치 완료 ($(Get-GhVersion))"
 }
@@ -266,10 +267,13 @@ function Read-Token {
     ConvertFrom-SecureStringPlain -Secure $secure
 }
 
+# 실패해도 멈추지 않는다 — 저장소가 공개이거나 다른 credential helper가
+# 이미 있으면 플러그인 설치는 그대로 성공한다. 판정은 Install-Plugin이 한다.
 function Set-GitCredentialHelper {
+    if (-not (Test-Command 'gh')) { return }
     $setup = Invoke-Native { gh auth setup-git --hostname github.com }
     if ($setup.ExitCode -ne 0) {
-        Stop-Fail "git 자격증명 연결에 실패했습니다.`n        $($setup.Output)"
+        Write-Warn "git 자격증명 연결에 실패했습니다. 그대로 플러그인 설치를 시도합니다."
     }
 }
 
@@ -316,23 +320,29 @@ function Install-Plugin {
     }
 }
 
-# 저장된 인증으로 먼저 시도하고, 실패하면 토큰을 다시 받아 최대 $MaxAttempts회 재시도한다.
-# 저장된 토큰이 '유효하지만 이 저장소에는 권한이 없는' 상태여도 gh auth status는 성공하므로,
-# 인증 여부만 보고 건너뛰면 새 토큰을 만들어도 반영되지 않는 상태에 갇힌다.
+# 인증 없이 먼저 설치를 시도하고, 실패할 때만 토큰을 받아 최대 $MaxAttempts회 재시도한다.
+# gh 로그인·credential helper 연결은 실패해도 멈추지 않는다 — 저장소가 공개이거나
+# 자격증명이 다른 경로로 이미 있으면 설치는 그대로 통과하기 때문이다.
+# 성공/실패 판정은 오직 Install-Plugin 결과로만 한다.
 function Confirm-RepoAccess {
     $envToken = [Environment]::GetEnvironmentVariable('GITHUB_PAT')
+    $hasGh = Test-Command 'gh'
 
-    if ([string]::IsNullOrWhiteSpace($envToken) -and (Invoke-Native { gh auth status }).ExitCode -eq 0) {
-        $who = (Invoke-Native { gh api user --jq .login }).Output
-        Write-Ok "GitHub 인증 이미 구성됨 (사용자: $who)"
-        Set-GitCredentialHelper
-        if ($SkipVerify) {
-            Write-Warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
-            return
+    if ($SkipVerify) {
+        Write-Warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
+        return
+    }
+
+    # 0. 현재 상태 그대로 설치 시도 (공개 저장소 / 기존 gh 인증 / 기존 credential helper)
+    if ([string]::IsNullOrWhiteSpace($envToken)) {
+        if ($hasGh -and (Invoke-Native { gh auth status }).ExitCode -eq 0) {
+            $who = (Invoke-Native { gh api user --jq .login }).Output
+            Write-Ok "GitHub 인증 이미 구성됨 (사용자: $who)"
         }
+        Set-GitCredentialHelper
         if (Install-Plugin) { return }
         Show-AccessFailureCauses
-        Write-Info "새 토큰으로 다시 시도합니다."
+        Write-Info "GitHub 토큰으로 다시 시도합니다."
     }
 
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
@@ -349,26 +359,26 @@ function Confirm-RepoAccess {
             continue
         }
 
-        Write-Info "토큰 저장 중..."
-        # 파이프로 전달 — 명령행 인자로 넘기지 않으므로 히스토리/프로세스 목록에 남지 않는다.
-        $login = Invoke-Native {
-            $token | gh auth login --hostname github.com --git-protocol https --with-token
+        if ($hasGh) {
+            Write-Info "토큰 저장 중..."
+            # 파이프로 전달 — 명령행 인자로 넘기지 않으므로 히스토리/프로세스 목록에 남지 않는다.
+            $login = Invoke-Native {
+                $token | gh auth login --hostname github.com --git-protocol https --with-token
+            }
+            if ($login.ExitCode -eq 0) {
+                $who = (Invoke-Native { gh api user --jq .login }).Output
+                Write-Ok "토큰 저장 완료 (사용자: $who)"
+                Set-GitCredentialHelper
+            }
+            else {
+                Write-Warn "gh 토큰 저장에 실패했습니다. 그대로 플러그인 설치를 시도합니다. ($attempt/$MaxAttempts)"
+            }
+        }
+        else {
+            Write-Warn "gh가 없어 토큰을 저장하지 못합니다. 그대로 플러그인 설치를 시도합니다."
         }
         Remove-Variable token -ErrorAction SilentlyContinue
 
-        if ($login.ExitCode -ne 0) {
-            Write-Warn "토큰이 유효하지 않습니다. 값을 다시 확인해 주세요. ($attempt/$MaxAttempts)"
-            continue
-        }
-
-        $who = (Invoke-Native { gh api user --jq .login }).Output
-        Write-Ok "토큰 저장 완료 (사용자: $who)"
-        Set-GitCredentialHelper
-
-        if ($SkipVerify) {
-            Write-Warn "CONTRL_SKIP_VERIFY: 플러그인 설치 생략"
-            return
-        }
         if (Install-Plugin) { return }
 
         Show-AccessFailureCauses
@@ -382,7 +392,7 @@ function Confirm-RepoAccess {
 
 # ── 5. 마무리 ─────────────────────────────────────────────────────────
 # 설치가 끝나면 Claude Desktop의 Claude Code 화면을 바로 띄우고, 입력창에
-# /contrl:setup 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
+# "/contrl:setup 한국어로 설치 진행" 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
 # claude:// 딥링크는 Desktop 앱이 등록하므로, 앱이 없거나 실행이 막히면
 # (EDR/AppLocker, 프로토콜 미등록) 열리지 않는다.
 #
@@ -390,12 +400,12 @@ function Confirm-RepoAccess {
 # 하므로, 함수는 예외를 밖으로 던지지 않고 $true/$false 만 돌려준다.
 # 호출 측은 성공 메시지를 먼저 출력한 뒤 이 함수를 부르고, 실패하면 직접
 # 열라는 안내로 대신한다. 이미 실행 중이면 새로 띄우지 않고 앞으로 가져온다.
-# q= 값은 URL 인코딩된 "/contrl:setup".
+# q= 값은 URL 인코딩된 "/contrl:setup 한국어로 설치 진행" (한글은 UTF-8 퍼센트 인코딩).
 #
 # ※ 검증 상태: Windows에서는 아직 실제로 테스트하지 못했다. 딥링크 동작은
 #    macOS(Desktop 1.46388.1)에서만 확인했고, Windows는 문법 검사만 통과한
 #    상태다. TESTING.md T9 시나리오로 확인이 필요하다.
-$SetupDeepLink = 'claude://code/new?q=%2Fcontrl%3Asetup&source=url_external'
+$SetupDeepLink = 'claude://code/new?q=%2Fcontrl%3Asetup%20%ED%95%9C%EA%B5%AD%EC%96%B4%EB%A1%9C%20%EC%84%A4%EC%B9%98%20%EC%A7%84%ED%96%89&source=url_external'
 
 function Open-ClaudeDesktop {
     $opened = $false
@@ -427,9 +437,9 @@ try {
 
     # 아래는 실패해도 무방한 편의 단계 — 어떤 결과든 안내 문구만 달라진다.
     if (Open-ClaudeDesktop) {
-        Write-Info "Claude Desktop을 열었습니다. 입력창의 /contrl:setup 을 Enter로 실행하세요."
+        Write-Info "Claude Desktop을 열었습니다. 입력창에 채워진 '/contrl:setup 한국어로 설치 진행' 을 Enter로 실행하세요."
     } else {
-        Write-Info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 /contrl:setup 을 입력해 실행하세요."
+        Write-Info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 '/contrl:setup 한국어로 설치 진행' 을 입력해 실행하세요."
     }
 }
 catch {

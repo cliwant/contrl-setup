@@ -66,6 +66,12 @@ irm https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.ps1 | ie
 
 기대: `gh auth login` 은 성공하지만(토큰 자체는 유효하다) 플러그인 설치에서 실패하고, 그 자리에서 원인 안내 + 토큰 발급 주소 재표시 + PAT 재입력을 제안한다. 2회차에 올바른 토큰을 넣으면 성공한다. 이때 1회차 실패로 marketplace가 반쯤 등록된 상태여도 재시도 경로(`marketplace update`)가 새 자격증명으로 이어받아야 한다. 3회 모두 실패하면 안내 문구와 함께 종료한다.
 
+### T4-1 · gh 없이 / gh 로그인 실패 상태에서 진행
+
+`gh` 를 PATH에서 제거한 상태(또는 `gh auth login` 이 실패하도록 네트워크를 막은 상태)에서 실행한다.
+
+기대: gh 설치·토큰 저장·credential helper 연결 실패는 모두 경고로만 출력되고 곧바로 플러그인 설치로 넘어간다. 저장소가 공개이거나 git 자격증명이 다른 경로(osxkeychain, Git Credential Manager 등)로 이미 있으면 설치가 성공하고, 없으면 원인 안내 후 토큰 재입력 루프로 들어간다. 어느 경우에도 gh 단계에서 스크립트가 멈추지 않는다.
+
 ### T5 · 잘못된 토큰이 저장된 상태에서 재실행
 
 T4에서 3회 실패로 종료된 직후(= 잘못된 토큰이 저장소에 남아 있는 상태), 같은 명령어를 처음부터 다시 실행한다.
@@ -94,11 +100,11 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 
 깨끗한 상태 + 초대된 계정 + `repo` 스코프 토큰으로 처음부터 끝까지 실행한다.
 
-기대: git 설치 → gh 설치 → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup` 이 채워져 있다(전송되지는 않는다). 앱이 없으면 직접 열어 입력하라는 안내로 대체되며, 어느 쪽이든 그 앞줄의 "모든 단계 완료" 는 반드시 출력된다.
+기대: git 설치 → gh 설치 → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup 한국어로 설치 진행` 이 채워져 있다(전송되지는 않는다). 앱이 없으면 직접 열어 입력하라는 안내로 대체되며, 어느 쪽이든 그 앞줄의 "모든 단계 완료" 는 반드시 출력된다.
 
 ```
 모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다.
-[INFO]  Claude Desktop을 열었습니다. 입력창의 /contrl:setup 을 Enter로 실행하세요.
+[INFO]  Claude Desktop을 열었습니다. 입력창에 채워진 '/contrl:setup 한국어로 설치 진행' 을 Enter로 실행하세요.
 ```
 
 끝난 뒤 `claude plugin list` 에 `contrl@contrl-harness` 가 enabled로 보이는지, Claude Desktop 새 세션에서 CONTRL 스킬이 로드되는지 확인한다.
@@ -109,7 +115,7 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 
 Claude Desktop이 설치된 Windows에서 T8을 끝까지 돌리고 확인한다.
 
-기대: Claude Desktop이 앞으로 오고 Claude Code 새 세션 입력창에 `/contrl:setup` 이 채워져 있다(전송은 되지 않는다). 아래 세 경우 모두 "모든 단계 완료" 가 먼저 출력되고 터미널이 닫히지 않아야 한다.
+기대: Claude Desktop이 앞으로 오고 Claude Code 새 세션 입력창에 `/contrl:setup 한국어로 설치 진행` 이 채워져 있다(전송은 되지 않는다). 아래 세 경우 모두 "모든 단계 완료" 가 먼저 출력되고 터미널이 닫히지 않아야 한다.
 
 - Desktop 설치됨 → `[INFO]  Claude Desktop을 열었습니다. …`
 - Desktop 미설치(프로토콜 미등록) → `[INFO]  Claude Desktop을 직접 연 뒤, …`
