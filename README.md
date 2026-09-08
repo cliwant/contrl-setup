@@ -24,7 +24,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/cliwant/contrl-setup/mai
 irm https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.ps1 | iex
 ```
 
-스크립트는 먼저 토큰 없이 플러그인 설치를 시도하고, 저장소에 접근하지 못할 때만 GitHub 토큰을 입력하는 화면을 띄웁니다. 화면에 표시된 토큰 발급 주소를 브라우저에서 열어 토큰을 만들고, 생성된 값을 복사해 붙여넣으면 됩니다. 입력한 값은 보안상 화면에 표시되지 않습니다.
+실행 중 GitHub 토큰을 입력하는 화면이 나옵니다. 화면에 표시된 토큰 발급 주소를 브라우저에서 열어 토큰을 만들고, 생성된 값을 복사해 붙여넣으면 됩니다. 입력한 값은 보안상 화면에 표시되지 않습니다.
 
 ## 잘 안 될 때
 

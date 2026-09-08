@@ -320,7 +320,9 @@ function Install-Plugin {
     }
 }
 
-# 인증 없이 먼저 설치를 시도하고, 실패할 때만 토큰을 받아 최대 $MaxAttempts회 재시도한다.
+# 저장된 인증으로 먼저 시도하고, 실패하면 토큰을 다시 받아 최대 $MaxAttempts회 재시도한다.
+# 저장된 토큰이 '유효하지만 이 저장소에는 권한이 없는' 상태여도 gh auth status는 성공하므로,
+# 인증 여부만 보고 건너뛰면 새 토큰을 만들어도 반영되지 않는 상태에 갇힌다.
 # gh 로그인·credential helper 연결은 실패해도 멈추지 않는다 — 저장소가 공개이거나
 # 자격증명이 다른 경로로 이미 있으면 설치는 그대로 통과하기 때문이다.
 # 성공/실패 판정은 오직 Install-Plugin 결과로만 한다.
@@ -333,16 +335,13 @@ function Confirm-RepoAccess {
         return
     }
 
-    # 0. 현재 상태 그대로 설치 시도 (공개 저장소 / 기존 gh 인증 / 기존 credential helper)
-    if ([string]::IsNullOrWhiteSpace($envToken)) {
-        if ($hasGh -and (Invoke-Native { gh auth status }).ExitCode -eq 0) {
-            $who = (Invoke-Native { gh api user --jq .login }).Output
-            Write-Ok "GitHub 인증 이미 구성됨 (사용자: $who)"
-        }
+    if ([string]::IsNullOrWhiteSpace($envToken) -and $hasGh -and (Invoke-Native { gh auth status }).ExitCode -eq 0) {
+        $who = (Invoke-Native { gh api user --jq .login }).Output
+        Write-Ok "GitHub 인증 이미 구성됨 (사용자: $who)"
         Set-GitCredentialHelper
         if (Install-Plugin) { return }
         Show-AccessFailureCauses
-        Write-Info "GitHub 토큰으로 다시 시도합니다."
+        Write-Info "새 토큰으로 다시 시도합니다."
     }
 
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {

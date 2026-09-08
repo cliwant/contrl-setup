@@ -70,7 +70,7 @@ irm https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.ps1 | ie
 
 `gh` 를 PATH에서 제거한 상태(또는 `gh auth login` 이 실패하도록 네트워크를 막은 상태)에서 실행한다.
 
-기대: gh 설치·토큰 저장·credential helper 연결 실패는 모두 경고로만 출력되고 곧바로 플러그인 설치로 넘어간다. 저장소가 공개이거나 git 자격증명이 다른 경로(osxkeychain, Git Credential Manager 등)로 이미 있으면 설치가 성공하고, 없으면 원인 안내 후 토큰 재입력 루프로 들어간다. 어느 경우에도 gh 단계에서 스크립트가 멈추지 않는다.
+기대: 확인 순서(로그인 확인 → 토큰 입력 → 플러그인 설치)는 그대로다. 다만 gh 설치·토큰 저장·credential helper 연결 실패는 모두 경고로만 출력되고 곧바로 플러그인 설치로 넘어간다. 저장소가 공개이거나 git 자격증명이 다른 경로(osxkeychain, Git Credential Manager 등)로 이미 있으면 설치가 성공하고, 없으면 원인 안내 후 토큰 재입력 루프로 이어진다. 어느 경우에도 gh 단계에서 스크립트가 멈추지 않는다.
 
 ### T5 · 잘못된 토큰이 저장된 상태에서 재실행
 
