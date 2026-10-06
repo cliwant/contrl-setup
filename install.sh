@@ -12,6 +12,17 @@
 #   - git : Xcode Command Line Tools 로 설치
 #   - gh  : GitHub 공식 릴리스 바이너리를 $INSTALL_PREFIX 에 설치 (sudo 불필요)
 #
+# TODO(python·node): install.ps1 처럼 python3(3.9+)·node(18+) 준비 단계를 추가해야 한다.
+#   플러그인 훅·렌더가 `python3`·`node` 이름으로 호출하는데 macOS 에는 node 가 없다.
+#   CLT 의 python3(3.9)는 고객 파이프라인 기준을 통과하므로 python 은 확인만 하면 된다.
+#   한 번 시도했다가 아래 문제로 철회했다 — 다시 할 때 먼저 풀 것:
+#   - Homebrew 자동 설치: 공식 설치기는 NONINTERACTIVE=1 이면 `sudo -n` 만 써서 비밀번호를
+#     묻지 않고 실패한다. 관리자 계정인지 확인 후 `sudo -v` 로 먼저 인증받아야 한다.
+#   - 공식 설치기는 Intel Mac 에서 바로 중단한다("only supported on Apple Silicon").
+#   - 그래서 brew 없는 경로에서도 node 를 설치할 수 있어야 한다 — 예: nodejs.org 공식
+#     tarball 을 $INSTALL_PREFIX 에 풀어 gh 처럼 sudo 없이 설치.
+#   - brew/패키지 설치 명령 실패는 `|| die` 로 감싸 안내를 남길 것 (set -e 로 조용히 끝남).
+#
 # 사용법:
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/cliwant/contrl-setup/main/install.sh)"
 #

@@ -100,7 +100,7 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 
 깨끗한 상태 + 초대된 계정 + `repo` 스코프 토큰으로 처음부터 끝까지 실행한다.
 
-기대: git 설치 → gh 설치 → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup 한국어로 설치 진행` 이 채워져 있다(전송되지는 않는다). 앱이 없으면 직접 열어 입력하라는 안내로 대체되며, 어느 쪽이든 그 앞줄의 "모든 단계 완료" 는 반드시 출력된다.
+기대: git 설치 → gh 설치 → (Windows 만: python3 · node 준비, T8-w 참고) → Claude Code 설치 → PAT 저장 → 플러그인 설치까지 전부 통과하고, Claude Desktop의 Claude Code 화면이 자동으로 열리고 입력창에 `/contrl:setup 한국어로 설치 진행` 이 채워져 있다(전송되지는 않는다). 앱이 없으면 직접 열어 입력하라는 안내로 대체되며, 어느 쪽이든 그 앞줄의 "모든 단계 완료" 는 반드시 출력된다.
 
 ```
 모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다.
@@ -108,6 +108,26 @@ macOS에 새 사용자 계정을 만들어 로그인한 뒤 실행하거나, 기
 ```
 
 끝난 뒤 `claude plugin list` 에 `contrl@contrl-harness` 가 enabled로 보이는지, Claude Desktop 새 세션에서 CONTRL 스킬이 로드되는지 확인한다.
+
+### T8-w · Windows 런타임 설치 (python3 이름 · node) — 아직 미검증
+
+**이 항목은 아직 실제 Windows 에서 실행해 보지 못했다.** `install.ps1` 의 `Install-Python` · `Install-Node` 는 PowerShell 파서 검사와 macOS pwsh 에서의 함수 단위 검사(버전 판정, 후보 탐색·정렬)만 통과한 상태다.
+
+Python 단계의 목표는 설치를 최대한 피하는 것이다. 세 갈래를 각각 확인한다.
+
+**T8-w-a · 기존 Python 재사용.** python.org 의 3.11 을 미리 설치해 `python`·`py` 는 되고 `python3` 는 Store 를 여는 상태에서 실행한다.
+
+기대: winget 설치 없이 "이미 설치된 Python 에 python3 이름을 연결했습니다 (Python 3.11.x)" 가 출력된다. 3.11 설치 폴더에 `python3.exe` 사본이 생기고 그 폴더가 사용자 PATH 맨 앞에 들어간다. 새 PowerShell 에서 `python3 --version` 이 3.11 을 출력해야 한다. 3.9 와 3.12 가 함께 있으면 3.12 쪽에 연결돼야 한다(폴더 이름 순이 아니라 버전 순).
+
+**T8-w-b · Python 없음.** python 이 전혀 없는 Windows 에서 실행한다.
+
+기대: winget 으로 Python 3.12 가 설치되고 T8-w-a 와 같이 `python3` 이름이 연결된다. Store 의 앱 실행 별칭이 여전히 앞서면 별칭을 끄라는 안내와 함께 [FAIL] 로 중단된다(Claude Code 설치로 넘어가지 않는다) — 그 경우 안내대로 끈 뒤 재실행해 통과하는지 본다.
+
+**T8-w-c · 쓰기 권한 없는 폴더의 Python.** 모든 사용자용으로 `C:\Program Files\Python3xx` 에만 Python 이 있는 상태에서 일반 권한으로 실행한다.
+
+기대: 그 폴더에 사본을 만들지 못하므로 재사용을 건너뛰고 winget(사용자 범위) 설치로 넘어간다. 중단되지 않아야 한다.
+
+Node.js LTS 는 UAC 승인 창이 한 번 뜬 뒤 설치되고 `node --version` 이 18 이상이어야 한다. UAC 창을 거부하면 [FAIL] 로 중단돼야 한다. 끝으로 Claude Desktop 세션 안에서 `python3 --version` 과 `node --version` 이 둘 다 잡히는지 확인한다(T6 과 같은 이유 — 훅은 Desktop 이 띄운 프로세스에서 돈다).
 
 ### T9 · Claude Desktop 자동 열기 (Windows — 아직 미검증)
 

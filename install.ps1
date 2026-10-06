@@ -3,9 +3,12 @@
 
       1. git 설치 (winget)
       2. GitHub CLI(gh) 설치 (winget)
-      3. Claude Code 설치
-      4. GitHub PAT 저장 + git credential helper 연결
-      5. CONTRL 플러그인 설치 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
+      3. Python 3.9+ 준비 — 이미 깔린 Python 이 있으면 설치하지 않고 `python3` 이름만 맞춘다
+         (같은 폴더에 python3.exe 사본). 없을 때만 winget 으로 3.12 설치
+      4. Node.js LTS 설치 (winget) — usage·handoff 훅과 validate 스크립트 런타임
+      5. Claude Code 설치
+      6. GitHub PAT 저장 + git credential helper 연결
+      7. CONTRL 플러그인 설치 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
          (플러그인 설치가 저장소 접근 확인을 겸한다 — 별도의 clone 검증은 하지 않는다)
 
     사용법:
@@ -152,7 +155,153 @@ function Install-Gh {
     Write-Ok "gh 설치 완료 ($(Get-GhVersion))"
 }
 
-# ── 3. Claude Code 설치 ───────────────────────────────────────────────
+# ── 3. Python 3.9+ 준비 ───────────────────────────────────────────────
+# 목표는 설치를 최대한 피하는 것이다. 플러그인 훅·렌더 스크립트는 정확히 `python3` 이름으로
+# 호출하는데, Windows 의 Python 은 대개 `python`·`py` 이름만 있고 `python3` 자리에는
+# Microsoft Store 를 여는 "앱 실행 별칭" 스텁만 깔려 있다. 그래서 순서는:
+#   1) `python3` 가 이미 3.9+ 면 그대로 쓴다
+#   2) 이미 깔린 Python(py 런처·python·표준 설치 폴더) 중 3.9+ 가 있으면 그 폴더에
+#      python3.exe 사본만 만들어 이름을 맞춘다 — 같은 폴더에 두면 DLL 을 자기 폴더에서
+#      찾으므로 그대로 동작한다
+#   3) 그래도 없을 때만 winget 으로 설치한 뒤 2) 와 같이 이름을 맞춘다
+# 기준 3.9: 고객 파이프라인(렌더 venv: lxml·Pillow)은 3.9 에서 동작함을 확인했다. 3.10+ 가
+# 필요한 markitdown 은 extract-design-system(내부용 템플릿 추출)에서만 쓴다. 하네스 코드가
+# 3.10 전용 문법(`X | None` 런타임 평가, match 등)을 쓰기 시작하면 다시 올려야 한다.
+$PyMinMajor = 3; $PyMinMinor = 9
+
+function Test-PyVersionOk {
+    param([int]$Major, [int]$Minor)
+    ($Major -gt $PyMinMajor) -or ($Major -eq $PyMinMajor -and $Minor -ge $PyMinMinor)
+}
+
+# 실제로 실행 가능한 python3 의 (major, minor) 를 돌려준다. Store 스텁이면 실행이
+# 실패하거나 빈 출력이 나오므로 자연히 걸러진다.
+function Get-Python3Version {
+    if (-not (Test-Command 'python3')) { return $null }
+    $r = Invoke-Native { python3 -c "import sys; print('%d %d' % sys.version_info[:2])" }
+    if ($r.ExitCode -ne 0 -or -not $r.Output) { return $null }
+    $parts = $r.Output.Trim() -split ' '
+    if ($parts.Count -ne 2) { return $null }
+    return @([int]$parts[0], [int]$parts[1])
+}
+
+function Test-Python3Ok {
+    $v = Get-Python3Version
+    if ($null -eq $v) { return $false }
+    Test-PyVersionOk $v[0] $v[1]
+}
+
+# 이미 깔린 Python 중 기준을 넘는 python.exe 를 찾아 버전이 높은 순으로 돌려준다.
+# 폴더 이름이 아니라 실제 실행 결과로 버전을 판정한다(이름 정렬은 Python39 > Python312).
+# WindowsApps 아래(Store 별칭)는 사본을 만들 수 없는 재분석 지점이라 제외한다.
+function Find-PythonExe {
+    $probe = "import sys; print('%d %d %s' % (sys.version_info[0], sys.version_info[1], sys.executable))"
+    $cmds = @()
+    if (Test-Command 'py')     { $cmds += ,@('py', '-3') }
+    if (Test-Command 'python') { $cmds += ,@('python') }
+    $dirs = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
+        $env:ProgramFiles
+    )
+    foreach ($d in $dirs) {
+        Get-ChildItem $d -Directory -Filter 'Python*' -ErrorAction SilentlyContinue | ForEach-Object {
+            $exe = Join-Path $_.FullName 'python.exe'
+            if (Test-Path $exe) { $cmds += ,@($exe) }
+        }
+    }
+
+    $found = @{}
+    foreach ($c in $cmds) {
+        $exeCmd = $c[0]; $extra = @($c | Select-Object -Skip 1)
+        $r = Invoke-Native { & $exeCmd @extra -c $probe }
+        if ($r.ExitCode -ne 0 -or -not $r.Output) { continue }
+        $parts = ($r.Output.Trim() -split "`n")[-1].Trim() -split ' ', 3
+        if ($parts.Count -ne 3) { continue }
+        $path = $parts[2]
+        if (-not (Test-PyVersionOk ([int]$parts[0]) ([int]$parts[1]))) { continue }
+        if (-not (Test-Path $path) -or $path -like '*\WindowsApps\*') { continue }
+        $found[$path] = [version]"$($parts[0]).$($parts[1])"
+    }
+    $found.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { $_.Key }
+}
+
+# python.exe 와 같은 폴더에 python3.exe 사본을 만들고, 폴더를 사용자 PATH 맨 앞에 둔다
+# (Store 스텁보다 앞서도록). Program Files 처럼 쓰기 권한이 없는 폴더면 false.
+function Register-Python3Alias {
+    param([Parameter(Mandatory)][string]$Exe)
+    $dir = Split-Path $Exe -Parent
+    $alias = Join-Path $dir 'python3.exe'
+    if (-not (Test-Path $alias)) {
+        try { Copy-Item $Exe $alias -Force -ErrorAction Stop } catch { return $false }
+    }
+
+    $key = 'HKCU:\Environment'
+    $raw = (Get-Item $key).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+    $entries = @($raw -split ';' | Where-Object { $_ -and $_ -ne $dir })
+    Set-ItemProperty -Path $key -Name Path -Value ((@($dir) + $entries) -join ';') -Type ExpandString
+
+    Update-SessionPath
+    $env:Path = "$dir;$env:Path"
+    return $true
+}
+
+# 찾은 후보에 차례로 python3 이름을 맞춰 보고, 하나라도 통과하면 true.
+function Connect-ExistingPython {
+    foreach ($exe in @(Find-PythonExe)) {
+        if ((Register-Python3Alias -Exe $exe) -and (Test-Python3Ok)) { return $true }
+    }
+    return $false
+}
+
+function Install-Python {
+    Update-SessionPath
+    if (Test-Python3Ok) {
+        $v = (Invoke-Native { python3 --version }).Output
+        Write-Ok "python3 이미 설치됨 ($v)"
+        return
+    }
+    if (Connect-ExistingPython) {
+        $v = (Invoke-Native { python3 --version }).Output
+        Write-Ok "이미 설치된 Python 에 python3 이름을 연결했습니다 ($v)"
+        return
+    }
+    Install-WingetPackage -Id 'Python.Python.3.12' -DisplayName 'Python 3.12'
+    if (-not (Connect-ExistingPython)) {
+        Stop-Fail "python3 $PyMinMajor.$PyMinMinor+ 가 'python3' 이름으로 잡히지 않습니다. 설정 > 앱 > 고급 앱 설정 > 앱 실행 별칭에서 python3.exe 를 끄고 새 PowerShell 을 열어 같은 명령어를 다시 실행해 주세요. (없으면 렌더와 승인 훅이 동작하지 않습니다)"
+    }
+    $v = (Invoke-Native { python3 --version }).Output
+    Write-Ok "python3 설치 완료 ($v)"
+}
+
+# ── 4. Node.js 설치 ───────────────────────────────────────────────────
+# Windows 에 node 는 기본 제공되지 않고 Claude Code 도 번들하지 않는다. usage 훅은
+# 실패해도 조용히 끝나므로 여기서 잡지 않으면 사용 기록이 유실된다. 전역 fetch 등에 18+ 필요.
+# OpenJS.NodeJS.LTS 는 시스템 전체 설치라 UAC 승인 창이 한 번 뜬다.
+$NodeMinMajor = 18
+
+function Test-NodeOk {
+    if (-not (Test-Command 'node')) { return $false }
+    $r = Invoke-Native { node -p "process.versions.node.split('.')[0]" }
+    if ($r.ExitCode -ne 0 -or -not $r.Output) { return $false }
+    [int]($r.Output.Trim()) -ge $NodeMinMajor
+}
+
+function Install-Node {
+    Update-SessionPath
+    if (Test-NodeOk) {
+        $v = (Invoke-Native { node --version }).Output
+        Write-Ok "node 이미 설치됨 ($v)"
+        return
+    }
+    Install-WingetPackage -Id 'OpenJS.NodeJS.LTS' -DisplayName 'Node.js LTS'
+    if (-not (Test-NodeOk)) {
+        Stop-Fail "node $NodeMinMajor+ 설치를 확인하지 못했습니다. https://nodejs.org/ 에서 LTS 를 설치한 뒤 새 PowerShell 을 열어 같은 명령어를 다시 실행해 주세요. (없으면 사용 기록·핸드오프 훅이 동작하지 않습니다)"
+    }
+    $v = (Invoke-Native { node --version }).Output
+    Write-Ok "node 설치 완료 ($v)"
+}
+
+# ── 5. Claude Code 설치 ───────────────────────────────────────────────
 # 공식 installer가 claude.exe를 %USERPROFILE%\.local\bin 에 설치하고도 사용자
 # PATH 레지스트리 등록에는 실패한 채 exit 0으로 끝나는 사례가 있다(경고로만
 # 처리). 산출물이 실제로 있으면 PATH를 직접 등록한다. 등록 성공 여부와 무관하게
@@ -237,7 +386,7 @@ function Install-Claude {
     Write-Ok "Claude Code 설치 완료 ($v)"
 }
 
-# ── 4. 토큰 입력 ──────────────────────────────────────────────────────
+# ── 6. 토큰 입력 ──────────────────────────────────────────────────────
 function ConvertFrom-SecureStringPlain {
     param([Parameter(Mandatory)][System.Security.SecureString]$Secure)
     $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
@@ -277,7 +426,7 @@ function Set-GitCredentialHelper {
     }
 }
 
-# ── 5. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
+# ── 7. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
 # GitHub는 권한 없는 private 저장소를 404로 숨기므로 스코프 누락과 초대 미수락을
 # 구분할 수 없다. 그래서 둘 다 안내한다 — 한쪽만 지목하면 나머지 절반의
 # 사용자를 엉뚱한 곳으로 보내게 된다.
@@ -389,7 +538,38 @@ function Confirm-RepoAccess {
     Stop-Fail "$MaxAttempts회 모두 실패했습니다. 위 두 가지를 확인한 뒤 같은 명령어를 다시 실행하거나,`n        화면에 나온 메시지를 그대로 담당자에게 전달해 주세요."
 }
 
-# ── 5. 마무리 ─────────────────────────────────────────────────────────
+# ── 8. 기본 모델·effort 설정 ──────────────────────────────────────────
+# Claude Code(Desktop의 Code 탭 포함)의 기본 모델을 opus, effort를 medium으로 맞춘다.
+# CLI에는 기본값을 영구 저장하는 명령이 없으므로(--model·--effort는 세션 한정)
+# 사용자 설정 파일(settings.json)의 model·effortLevel 키만 병합하고 나머지 키는 보존한다.
+# 편의 단계라 실패해도 설치를 중단하지 않는다. 파일이 깨진 JSON이면 건드리지 않는다.
+# BOM 없는 UTF-8로 써야 한다 — PS 5.1의 Set-Content -Encoding UTF8 은 BOM을 붙인다.
+function Set-ClaudeDefaults {
+    $configDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
+    $settings = Join-Path $configDir 'settings.json'
+    try {
+        $data = [pscustomobject]@{}
+        if (Test-Path $settings) {
+            $text = [IO.File]::ReadAllText($settings)
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
+                $data = $text | ConvertFrom-Json -ErrorAction Stop
+            }
+            if ($data -isnot [pscustomobject]) { throw "settings.json 최상위가 객체가 아닙니다." }
+        }
+        $data | Add-Member -NotePropertyName 'model' -NotePropertyValue 'opus' -Force
+        $data | Add-Member -NotePropertyName 'effortLevel' -NotePropertyValue 'medium' -Force
+
+        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        $json = $data | ConvertTo-Json -Depth 100
+        [IO.File]::WriteAllText($settings, $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
+        Write-Ok "Claude Code 기본 모델 opus · effort medium 으로 설정 완료"
+    }
+    catch {
+        Write-Warn "기본 모델/effort 설정에 실패했습니다 ($settings). Claude Code에서 /model 로 직접 설정해 주세요."
+    }
+}
+
+# ── 9. 마무리 ─────────────────────────────────────────────────────────
 # 설치가 끝나면 Claude Desktop의 Claude Code 화면을 바로 띄우고, 입력창에
 # "/contrl:setup 한국어로 설치 진행" 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
 # claude:// 딥링크는 Desktop 앱이 등록하므로, 앱이 없거나 실행이 막히면
@@ -428,11 +608,15 @@ try {
     Test-Prerequisites
     Install-Git
     Install-Gh
+    Install-Python
+    Install-Node
     Install-Claude
     Confirm-RepoAccess
 
     Write-Host ''
     Write-Ok "모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다."
+
+    Set-ClaudeDefaults
 
     # 아래는 실패해도 무방한 편의 단계 — 어떤 결과든 안내 문구만 달라진다.
     if (Open-ClaudeDesktop) {
