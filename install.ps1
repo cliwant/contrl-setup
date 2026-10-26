@@ -6,6 +6,7 @@
       3. Python 3.9+ 준비 — 이미 깔린 Python 이 있으면 설치하지 않고 `python3` 이름만 맞춘다
          (같은 폴더에 python3.exe 사본). 없을 때만 winget 으로 3.12 설치
       4. Node.js LTS 설치 (winget) — usage·handoff 훅과 validate 스크립트 런타임
+         (3·4 는 실패해도 경고만 하고 계속한다 — 마지막에 준비되지 않은 항목을 다시 알린다)
       5. Claude Code 설치
       6. GitHub PAT 저장 + git credential helper 연결
       7. CONTRL 플러그인 설치 — 실패하면 원인을 안내하고 최대 3회까지 토큰 재입력
@@ -36,6 +37,12 @@ $MaxAttempts = 3
 # scopes 파라미터로 repo·admin:org 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
 $TokenUrl    = 'https://github.com/settings/tokens/new?scopes=repo,admin:org&description=CONTRL%20harness&default_expires_at=none'
 $SkipVerify  = -not [string]::IsNullOrWhiteSpace($env:CONTRL_SKIP_VERIFY)
+# 이번 실행에서 python3 이름 연결·node 설치로 PATH 를 바꿨는지 — 떠 있는 Desktop 은 모른다
+$script:NeedDesktopRestart = $false
+# python3·node 단계는 실패해도 설치를 멈추지 않는다 — 플러그인 설치와 Desktop 열기까지
+# 이어 가고, 준비되지 않은 항목은 마지막에 모아서 다시 알린다.
+$script:RuntimeWarnings = @()
+function Add-RuntimeWarning { param([string]$Msg) $script:RuntimeWarnings += $Msg }
 
 # ── 로깅 ──────────────────────────────────────────────────────────────
 function Write-Info { param([string]$Msg) Write-Host "[INFO]  $Msg" -ForegroundColor Cyan }
@@ -242,6 +249,7 @@ function Register-Python3Alias {
 
     Update-SessionPath
     $env:Path = "$dir;$env:Path"
+    $script:NeedDesktopRestart = $true
     return $true
 }
 
@@ -267,7 +275,9 @@ function Install-Python {
     }
     Install-WingetPackage -Id 'Python.Python.3.12' -DisplayName 'Python 3.12'
     if (-not (Connect-ExistingPython)) {
-        Stop-Fail "python3 $PyMinMajor.$PyMinMinor+ 가 'python3' 이름으로 잡히지 않습니다. 설정 > 앱 > 고급 앱 설정 > 앱 실행 별칭에서 python3.exe 를 끄고 새 PowerShell 을 열어 같은 명령어를 다시 실행해 주세요. (없으면 렌더와 승인 훅이 동작하지 않습니다)"
+        Write-Warn "python3 $PyMinMajor.$PyMinMinor+ 가 'python3' 이름으로 잡히지 않습니다. 설치는 계속 진행합니다."
+        Add-RuntimeWarning "python3 없음 — 설정 > 앱 > 고급 앱 설정 > 앱 실행 별칭에서 python3.exe 를 끄고 새 PowerShell 에서 같은 명령어를 다시 실행해 주세요. (없으면 렌더와 승인 훅이 동작하지 않습니다)"
+        return
     }
     $v = (Invoke-Native { python3 --version }).Output
     Write-Ok "python3 설치 완료 ($v)"
@@ -295,10 +305,13 @@ function Install-Node {
     }
     Install-WingetPackage -Id 'OpenJS.NodeJS.LTS' -DisplayName 'Node.js LTS'
     if (-not (Test-NodeOk)) {
-        Stop-Fail "node $NodeMinMajor+ 설치를 확인하지 못했습니다. https://nodejs.org/ 에서 LTS 를 설치한 뒤 새 PowerShell 을 열어 같은 명령어를 다시 실행해 주세요. (없으면 사용 기록·핸드오프 훅이 동작하지 않습니다)"
+        Write-Warn "node $NodeMinMajor+ 설치를 확인하지 못했습니다. 설치는 계속 진행합니다."
+        Add-RuntimeWarning "node $NodeMinMajor+ 없음 — https://nodejs.org/ 에서 LTS 를 설치한 뒤 Claude Desktop 을 다시 시작해 주세요. (없으면 사용 기록·핸드오프 훅이 동작하지 않습니다)"
+        return
     }
     $v = (Invoke-Native { node --version }).Output
     Write-Ok "node 설치 완료 ($v)"
+    $script:NeedDesktopRestart = $true
 }
 
 # ── 5. Claude Code 설치 ───────────────────────────────────────────────
@@ -601,6 +614,109 @@ function Open-ClaudeDesktop {
     return $opened
 }
 
+# ── Desktop 재시작 ────────────────────────────────────────────────────
+# Desktop 은 시작할 때 받은 PATH 를 계속 쓰고, 딥링크는 떠 있는 창을 앞으로 가져오기만
+# 한다. 이번 실행에서 PATH 가 바뀌었는데 Desktop 이 떠 있으면 재시작을 제안한다.
+# 재시작 후 딥링크는 이 세션에서 Start-Process 로 띄우므로, Update-SessionPath 로 갱신된
+# 이 세션의 PATH 를 물려받을 것으로 본다(일반 설치 기준 — MSIX 설치는 시스템 경로로 실행돼
+# 다를 수 있다). 실기기 미검증: TESTING.md T10.
+#
+# Desktop 과 Claude Code CLI 는 둘 다 claude.exe 라 이름으로는 못 가른다. 설치 경로로
+# 알려진 패턴에 맞는 것만 Desktop 으로 본다 — 잘못 잡으면 터미널의 CLI 세션을 끄게 되므로,
+# 못 알아보면 "실행 중 아님"으로 두고 기존처럼 딥링크만 연다.
+#   %LOCALAPPDATA%\AnthropicClaude\…   (일반 설치)
+#   …\WindowsApps\Claude_…             (MSIX)
+function Get-DesktopProcess {
+    $squirrel = Join-Path $env:LOCALAPPDATA 'AnthropicClaude\'
+    @(Get-Process -Name claude -ErrorAction SilentlyContinue | Where-Object {
+        $p = $_.Path
+        $p -and ($p.StartsWith($squirrel, [StringComparison]::OrdinalIgnoreCase) -or
+                 $p -like '*\WindowsApps\Claude_*')
+    })
+}
+
+# 이 스크립트가 Desktop 안(Claude Code 세션의 터미널 등)에서 돌고 있으면 재시작이
+# 스크립트 자신을 끝낸다. 부모 프로세스를 거슬러 올라가며 확인한다. 확인할 수 없으면
+# (WMI 차단 등) 안쪽일 수도 있다고 보고 true — 끄지 않고 안내만 하는 쪽이 안전하다.
+function Test-InsideDesktop {
+    param([int[]]$DesktopIds)
+    try {
+        $id = $PID
+        for ($i = 0; $i -lt 32 -and $id -gt 0; $i++) {
+            if ($DesktopIds -contains $id) { return $true }
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $id" -ErrorAction Stop
+            if (-not $proc) { break }
+            $id = [int]$proc.ParentProcessId
+        }
+        return $false
+    }
+    catch {
+        return $true
+    }
+}
+
+# 관리자 권한 PowerShell 에서 Desktop 을 다시 띄우면 Desktop 과 그 안의 Claude Code 까지
+# 관리자 권한으로 뜬다. 그 경우는 끄지 않고 안내만 한다. 확인할 수 없으면 관리자로 본다.
+function Test-Elevated {
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    catch {
+        $true
+    }
+}
+
+function Show-RestartGuidance {
+    Write-Info "Claude Desktop을 완전히 종료(작업 표시줄 오른쪽 트레이의 Claude 아이콘 → 종료)한 뒤 다시 열어 주세요. 그래야 방금 설치한 python3·node 를 앱이 인식합니다."
+    Write-Info "다시 연 뒤 Claude Code 입력창에 '/contrl:setup 한국어로 설치 진행' 을 입력해 실행하세요."
+}
+
+# $true: 딥링크로 이어가도 된다(재시작이 필요 없거나 재시작함)  $false: 재시작 안내를 이미 출력함.
+# 편의 단계라 예외를 밖으로 던지지 않는다 — 어떤 실패든 기존 동작(딥링크)으로 돌아간다.
+function Request-DesktopRestart {
+    if (-not $script:NeedDesktopRestart) { return $true }
+    try {
+        $desktop = Get-DesktopProcess
+        if ($desktop.Count -eq 0) { return $true }
+
+        $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+        if (-not $interactive -or (Test-Elevated) -or
+            (Test-InsideDesktop -DesktopIds @($desktop | ForEach-Object { $_.Id }))) {
+            Show-RestartGuidance
+            return $false
+        }
+
+        # 기본값은 Y — 재시작해야 이번 설치가 효과를 내므로 Enter 만 눌러도 진행하고, n 일 때만
+        # 직접 재시작 안내로 돌린다. 설치를 기다리며 미리 눌러 둔 Enter 가 동의로 읽히지 않도록
+        # 묻기 직전에 콘솔 입력 버퍼를 비운다.
+        try { $Host.UI.RawUI.FlushInputBuffer() } catch { }
+        try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
+
+        Write-Host ''
+        Write-Info "Claude Desktop이 실행 중입니다. 방금 설치한 python3·node 를 앱이 인식하려면 다시 시작해야 합니다."
+        $ans = Read-Host '        진행 중인 Claude 작업이 있다면 끊어집니다. 지금 Claude를 다시 시작할까요? [Y/n]'
+        if ($ans -match '^\s*(n|no)\s*$') {
+            Show-RestartGuidance
+            return $false
+        }
+
+        # 창을 닫으면 트레이로 숨기만 하므로 정상 종료 요청 단계는 두지 않는다.
+        Write-Info "Claude Desktop을 다시 시작합니다..."
+        $desktop | Stop-Process -Force -ErrorAction SilentlyContinue
+        for ($i = 0; $i -lt 50; $i++) {
+            if ((Get-DesktopProcess).Count -eq 0) { return $true }
+            Start-Sleep -Milliseconds 200
+        }
+        Write-Warn "Claude Desktop을 종료하지 못했습니다."
+        Show-RestartGuidance
+        return $false
+    }
+    catch {
+        return $true
+    }
+}
+
 # ── 실행 ──────────────────────────────────────────────────────────────
 # Stop-Fail의 throw를 여기서 받는다. exit를 쓰지 않으므로 `irm | iex` 로 실행한
 # 사용자 터미널이 닫히지 않고, 실패 메시지가 화면에 남는다.
@@ -608,21 +724,39 @@ try {
     Test-Prerequisites
     Install-Git
     Install-Gh
-    Install-Python
-    Install-Node
+    # python3·node 는 예상 밖의 오류가 나도 멈추지 않는다 (Add-RuntimeWarning 주석 참고)
+    try { Install-Python }
+    catch {
+        Write-Warn "python3 준비 중 오류: $($_.Exception.Message)"
+        Add-RuntimeWarning "python3 준비 실패 — 같은 명령어를 다시 실행해 주세요."
+    }
+    try { Install-Node }
+    catch {
+        Write-Warn "node 준비 중 오류: $($_.Exception.Message)"
+        Add-RuntimeWarning "node 준비 실패 — https://nodejs.org/ 에서 LTS 를 설치한 뒤 Claude Desktop 을 다시 시작해 주세요."
+    }
     Install-Claude
     Confirm-RepoAccess
 
     Write-Host ''
     Write-Ok "모든 단계 완료. CONTRL 플러그인이 준비돼 있습니다."
+    if ($script:RuntimeWarnings.Count -gt 0) {
+        Write-Warn "아래 항목은 준비되지 않았습니다 (플러그인은 설치됐습니다):"
+        $script:RuntimeWarnings | ForEach-Object { Write-Host "        - $_" -ForegroundColor Yellow }
+        Write-Host "        회사 보안 정책이나 네트워크 환경 때문에 설치·사용 기록 전송이 막혔을 수도 있습니다." -ForegroundColor Yellow
+    }
 
     Set-ClaudeDefaults
 
     # 아래는 실패해도 무방한 편의 단계 — 어떤 결과든 안내 문구만 달라진다.
-    if (Open-ClaudeDesktop) {
-        Write-Info "Claude Desktop을 열었습니다. 입력창에 채워진 '/contrl:setup 한국어로 설치 진행' 을 Enter로 실행하세요."
-    } else {
-        Write-Info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 '/contrl:setup 한국어로 설치 진행' 을 입력해 실행하세요."
+    # 여기서 띄우는 Desktop 은 이 세션의 환경을 물려받는다. 플러그인 설치용으로만 켠 값은 지운다.
+    Remove-Item Env:\CLAUDE_CODE_PLUGIN_PREFER_HTTPS -ErrorAction SilentlyContinue
+    if (Request-DesktopRestart) {
+        if (Open-ClaudeDesktop) {
+            Write-Info "Claude Desktop을 열었습니다. 입력창에 채워진 '/contrl:setup 한국어로 설치 진행' 을 Enter로 실행하세요."
+        } else {
+            Write-Info "Claude Desktop을 직접 연 뒤, Claude Code 입력창에 '/contrl:setup 한국어로 설치 진행' 을 입력해 실행하세요."
+        }
     }
 }
 catch {
