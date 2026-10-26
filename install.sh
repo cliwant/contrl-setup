@@ -344,42 +344,54 @@ shell_profile_file() {
 # 디렉토리를 셸 프로필의 PATH 맨 앞에 등록한다. 표식이 붙은 한 줄만 덧붙이고, 같은 줄이
 # 이미 있으면 아무것도 하지 않는다. 기존 줄은 지우거나 고치지 않는다.
 add_path_to_profile() {
-  local dir="$1" file line
+  local dir="$1" file line manual
   line="export PATH=\"$dir:\$PATH\"  $PROFILE_MARK"
-  if ! file="$(shell_profile_file)"; then
-    warn "이 셸(${SHELL:-알 수 없음})의 설정 파일은 자동으로 고치지 않습니다. 아래 한 줄을 직접 추가하세요:
+  manual="아래 한 줄을 직접 추가하세요:
         export PATH=\"$dir:\$PATH\""
+  if ! file="$(shell_profile_file)"; then
+    warn "이 셸(${SHELL:-알 수 없음})의 설정 파일은 자동으로 고치지 않습니다. $manual"
     return 1
   fi
   grep -qsF "$line" "$file" && return 0
   if ! printf '\n%s\n' "$line" >>"$file" 2>/dev/null; then
-    warn "$file 에 PATH 를 등록하지 못했습니다. 아래 한 줄을 직접 추가하세요:
-        export PATH=\"$dir:\$PATH\""
+    warn "$file 에 PATH 를 등록하지 못했습니다. $manual"
     return 1
   fi
   NEED_DESKTOP_RESTART=1
   ok "$file 에 PATH 등록: $dir"
 }
 
+# Desktop 이 읽는 로그인 셸에서 node 18+ 가 보이는가. 0: 보임  1: 안 보임  2: 확인 못 함.
+# 잡힌 node("major 경로", 없으면 빈 값)는 LOGIN_SHELL_NODE 에 남긴다.
+LOGIN_SHELL_NODE=""
+login_shell_sees_node() {
+  LOGIN_SHELL_NODE="$(login_shell_node)" || { LOGIN_SHELL_NODE=""; return 2; }
+  [[ -n "$LOGIN_SHELL_NODE" ]] && (( ${LOGIN_SHELL_NODE%% *} >= NODE_MIN_MAJOR )) && return 0
+  return 1
+}
+
 # Desktop 이 읽는 로그인 셸에서 node 18+ 가 보이게 한다. 이미 보이면 아무것도 고치지 않는다.
+# 확인을 못 했으면(시간 초과) 등록은 해 둔다 — 같은 줄은 두 번 쓰지 않으므로 해가 없다.
 ensure_node_visible_to_desktop() {
-  local dir="$1" found="" checked=1
-  found="$(login_shell_node)" || checked=0
-  if [[ $checked -eq 1 && -n "$found" && "${found%% *}" -ge $NODE_MIN_MAJOR ]]; then
+  local dir="$1" rc=0
+  login_shell_sees_node || rc=$?
+  (( rc == 0 )) && return 0
+  if ! add_path_to_profile "$dir"; then
+    add_runtime_warning "node 경로($dir)를 셸 설정에 등록하지 못함 — 위 안내대로 추가한 뒤 Claude Desktop 을 다시 시작하세요."
     return 0
   fi
-  add_path_to_profile "$dir" || { add_runtime_warning "node 경로($dir)를 셸 설정에 등록하지 못함 — 위 안내대로 추가한 뒤 Claude 앱을 다시 시작하세요."; return 0; }
 
-  found="" checked=1
-  found="$(login_shell_node)" || checked=0
-  if [[ $checked -eq 0 ]]; then
-    warn "셸 설정을 읽는 데 시간이 너무 걸려 Claude 앱에서 node 가 보이는지 확인하지 못했습니다."
-  elif [[ -z "$found" || "${found%% *}" -lt $NODE_MIN_MAJOR ]]; then
-    # 예: nvm 이 ~/.zshrc 에서 오래된 기본 버전을 PATH 앞에 다시 넣는 경우
-    warn "셸 설정에서 node 18 이상이 잡히지 않습니다 (잡힌 node: ${found:-없음}).
+  rc=0
+  login_shell_sees_node || rc=$?
+  case "$rc" in
+    2) warn "셸 설정을 읽는 데 시간이 너무 걸려 Claude Desktop 에서 node 가 보이는지 확인하지 못했습니다." ;;
+    1)
+      # 예: nvm 이 ~/.zshrc 에서 오래된 기본 버전을 PATH 앞에 다시 넣는 경우
+      warn "셸 설정에서 node ${NODE_MIN_MAJOR} 이상이 잡히지 않습니다 (잡힌 node: ${LOGIN_SHELL_NODE:-없음}).
         셸 설정(~/.zshrc 등)이 다른 node 를 앞에 두고 있는지 확인해 주세요. (nvm 이면 'nvm alias default 22')"
-    add_runtime_warning "셸 설정에서 node 18+ 가 잡히지 않음 (${found:-없음}) — 사용 기록·핸드오프 기능이 동작하지 않을 수 있습니다."
-  fi
+      add_runtime_warning "셸 설정에서 node ${NODE_MIN_MAJOR}+ 가 잡히지 않음 (${LOGIN_SHELL_NODE:-없음}) — 사용 기록·핸드오프 기능이 동작하지 않을 수 있습니다."
+      ;;
+  esac
 }
 
 # 비교: 현재 macOS 가 $1.$2 이상인가
@@ -427,13 +439,13 @@ install_node_from_release() {
   tar -xzf "$tmp/$file" -C "$tmp" || { warn "Node.js 압축 해제 실패"; return 1; }
   [[ -x "$tmp/$name/bin/node" ]] || { warn "압축 해제된 node 를 찾지 못했습니다."; return 1; }
 
-  dest="$INSTALL_PREFIX/share/nodejs"
+  dest="$NODE_DIST_DIR"
   link="$INSTALL_PREFIX/bin/node"
   # 이 스크립트가 만든 링크만 바꾼다 — 유저가 직접 둔 node 는 덮어쓰지 않는다.
   if [[ -e "$link" || -L "$link" ]]; then
     cur="$(readlink "$link" 2>/dev/null || true)"
     if [[ "$cur" != "$dest"/* ]]; then
-      warn "$link 에 다른 node 가 있어 덮어쓰지 않았습니다. 지우거나 18 이상으로 바꾼 뒤 다시 실행해 주세요."
+      warn "$link 에 다른 node 가 있어 덮어쓰지 않았습니다. 지우거나 ${NODE_MIN_MAJOR} 이상으로 바꾼 뒤 다시 실행해 주세요."
       return 1
     fi
   fi
@@ -445,39 +457,36 @@ install_node_from_release() {
 }
 
 install_node() {
-  [[ "$OS" == "Darwin" ]] || return 0
-  local major
+  local major brew_bin brew_major=""
   major="$(node_major_here)"
   if [[ "$major" =~ ^[0-9]+$ ]] && (( major >= NODE_MIN_MAJOR )); then
     ok "node 이미 설치됨 ($(node --version))"
     # 지난 실행이 설치한 node 인데 PATH 등록이 안 됐던 경우만 다시 등록을 시도한다.
-    if [[ "$(readlink "$INSTALL_PREFIX/bin/node" 2>/dev/null || true)" == "$INSTALL_PREFIX/share/nodejs/"* \
+    if [[ "$(readlink "$INSTALL_PREFIX/bin/node" 2>/dev/null || true)" == "$NODE_DIST_DIR/"* \
           && "$(command -v node)" == "$INSTALL_PREFIX/bin/node" ]]; then
       ensure_node_visible_to_desktop "$INSTALL_PREFIX/bin"
     fi
     return 0
   fi
   if [[ -n "$major" ]]; then
-    info "node $(node --version 2>/dev/null) 는 18 미만이라 새 버전을 함께 설치합니다 (기존 node 는 지우지 않습니다)."
+    info "node $(node --version 2>/dev/null) 는 ${NODE_MIN_MAJOR} 미만이라 새 버전을 함께 설치합니다 (기존 node 는 지우지 않습니다)."
   fi
 
   info "Node.js 설치 중..."
-  NODE_BIN_DIR=""
   if [[ "$PKG" == "brew" ]]; then
     # 종료 코드만 믿지 않는다 — 다른 node(예: node@16)와 링크가 충돌해도 0 이 나올 수 있다.
-    local brew_bin brew_major=""
     brew_bin="$(brew --prefix 2>/dev/null || true)/bin"
     if brew install node && [[ -x "$brew_bin/node" ]]; then
-      brew_major="$("$brew_bin/node" -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
+      brew_major="$(node_major_of "$brew_bin/node")"
     fi
     if [[ "$brew_major" =~ ^[0-9]+$ ]] && (( brew_major >= NODE_MIN_MAJOR )); then
       NODE_BIN_DIR="$brew_bin"
     else
-      warn "brew 로 node 18+ 를 준비하지 못했습니다. 공식 배포판으로 다시 시도합니다."
+      warn "brew 로 node ${NODE_MIN_MAJOR}+ 를 준비하지 못했습니다. 공식 배포판으로 다시 시도합니다."
     fi
   fi
   if [[ -z "$NODE_BIN_DIR" ]] && ! install_node_from_release; then
-    add_runtime_warning "node 18+ 설치 실패 — https://nodejs.org/ 에서 LTS 를 설치한 뒤 Claude 앱을 다시 시작하세요. (없으면 사용 기록·핸드오프 기능이 동작하지 않습니다)"
+    add_runtime_warning "node ${NODE_MIN_MAJOR}+ 설치 실패 — https://nodejs.org/ 에서 LTS 를 설치한 뒤 Claude Desktop 을 다시 시작하세요. (없으면 사용 기록·핸드오프 기능이 동작하지 않습니다)"
     return 0
   fi
 
@@ -489,7 +498,7 @@ install_node() {
 }
 
 prepare_runtimes() {
-  [[ "$OS" == "Darwin" ]] || return 0
+  [[ "$OS" == "Darwin" ]] || return 0   # Linux 는 범위 밖
   check_python3
   install_node
 }
@@ -515,7 +524,7 @@ install_claude() {
   ok "Claude Code 설치 완료 ($(claude --version))"
 }
 
-# ── 4. 토큰 입력 ──────────────────────────────────────────────────────
+# ── 5. 토큰 입력 ──────────────────────────────────────────────────────
 # 브라우저를 직접 연다 — 터미널에서 긴 주소를 복사해 옮기는 단계가 빠진다.
 # GUI가 없거나(SSH, 컨테이너) 열기에 실패하면 주소를 그대로 보여준다.
 open_url() {
@@ -555,7 +564,7 @@ setup_git_credential() {
     || warn "git 자격증명 연결에 실패했습니다. 그대로 플러그인 설치를 시도합니다."
 }
 
-# ── 5. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
+# ── 6. 플러그인 설치 (저장소 접근 확인 겸용) ──────────────────────────
 # GitHub는 권한 없는 private 저장소를 404로 숨기므로 스코프 누락과 초대 미수락을
 # 구분할 수 없다. 그래서 둘 다 안내한다 — 한쪽만 지목하면 나머지 절반의
 # 사용자를 엉뚱한 곳으로 보내게 된다.
@@ -651,7 +660,7 @@ ensure_access() {
         화면에 나온 메시지를 그대로 담당자에게 전달해 주세요."
 }
 
-# ── 5. 마무리 ─────────────────────────────────────────────────────────
+# ── 7. 마무리 ─────────────────────────────────────────────────────────
 # 설치가 끝나면 Claude Desktop의 Claude Code 화면을 바로 띄우고, 입력창에
 # "/contrl:setup 한국어로 설치 진행" 을 채워 둔다(전송은 하지 않는다 — Enter는 사용자 몫).
 # claude:// 딥링크는 Desktop 앱이 등록하므로, 앱이 없거나 GUI가 아니면
@@ -741,9 +750,8 @@ offer_desktop_restart() {
     show_restart_guidance
     return 1
   fi
-  # 기본값은 Y — 재시작해야 이번 설치가 효과를 내므로 Enter 만 눌러도 진행한다.
-  # 작업이 끊길 수 있다는 점은 질문에 적어 두고, n 일 때만 직접 재시작 안내로 돌린다.
-  # 기본값이 Y 라서, 설치를 기다리며 미리 눌러 둔 Enter 가 그대로 동의가 되지 않도록
+  # 기본값은 Y — 재시작해야 이번 설치가 효과를 내므로 Enter 만 눌러도 진행하고, n 일 때만
+  # 직접 재시작 안내로 돌린다. 설치를 기다리며 미리 눌러 둔 Enter 가 동의로 읽히지 않도록
   # 묻기 직전에 터미널 입력 버퍼를 비운다.
   /usr/bin/perl -MPOSIX -e 'POSIX::tcflush(0, POSIX::TCIFLUSH())' 2>/dev/null || true
   printf '\n'

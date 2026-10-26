@@ -37,7 +37,7 @@ $MaxAttempts = 3
 # scopes 파라미터로 repo·admin:org 체크박스를 미리 채워 둔다 — 스코프 누락이 접근 실패의 절반이다.
 $TokenUrl    = 'https://github.com/settings/tokens/new?scopes=repo,admin:org&description=CONTRL%20harness&default_expires_at=none'
 $SkipVerify  = -not [string]::IsNullOrWhiteSpace($env:CONTRL_SKIP_VERIFY)
-# python3 이름 연결·node 설치로 PATH 가 바뀌었다 → 이미 떠 있는 Claude Desktop 은 모른다
+# 이번 실행에서 python3 이름 연결·node 설치로 PATH 를 바꿨는지 — 떠 있는 Desktop 은 모른다
 $script:NeedDesktopRestart = $false
 # python3·node 단계는 실패해도 설치를 멈추지 않는다 — 플러그인 설치와 Desktop 열기까지
 # 이어 가고, 준비되지 않은 항목은 마지막에 모아서 다시 알린다.
@@ -656,7 +656,7 @@ function Test-InsideDesktop {
 }
 
 # 관리자 권한 PowerShell 에서 Desktop 을 다시 띄우면 Desktop 과 그 안의 Claude Code 까지
-# 관리자 권한으로 뜬다. 그 경우는 끄지 않고 안내만 한다.
+# 관리자 권한으로 뜬다. 그 경우는 끄지 않고 안내만 한다. 확인할 수 없으면 관리자로 본다.
 function Test-Elevated {
     try {
         $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -687,13 +687,12 @@ function Request-DesktopRestart {
             return $false
         }
 
-        # 기본값이 Y 라서, 설치를 기다리며 미리 눌러 둔 Enter 가 그대로 동의가 되지 않도록
+        # 기본값은 Y — 재시작해야 이번 설치가 효과를 내므로 Enter 만 눌러도 진행하고, n 일 때만
+        # 직접 재시작 안내로 돌린다. 설치를 기다리며 미리 눌러 둔 Enter 가 동의로 읽히지 않도록
         # 묻기 직전에 콘솔 입력 버퍼를 비운다.
         try { $Host.UI.RawUI.FlushInputBuffer() } catch { }
         try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
 
-        # 기본값은 Y — 재시작해야 이번 설치가 효과를 내므로 Enter 만 눌러도 진행한다.
-        # 작업이 끊길 수 있다는 점은 질문에 적어 두고, n 일 때만 직접 재시작 안내로 돌린다.
         Write-Host ''
         Write-Info "Claude Desktop이 실행 중입니다. 방금 설치한 python3·node 를 앱이 인식하려면 다시 시작해야 합니다."
         $ans = Read-Host '        진행 중인 Claude 작업이 있다면 끊어집니다. 지금 Claude를 다시 시작할까요? [Y/n]'
@@ -725,8 +724,17 @@ try {
     Test-Prerequisites
     Install-Git
     Install-Gh
-    try { Install-Python } catch { Write-Warn "python3 준비 중 오류: $($_.Exception.Message)"; Add-RuntimeWarning "python3 준비 실패 — 같은 명령어를 다시 실행해 주세요." }
-    try { Install-Node }   catch { Write-Warn "node 준비 중 오류: $($_.Exception.Message)";    Add-RuntimeWarning "node 준비 실패 — https://nodejs.org/ 에서 LTS 를 설치한 뒤 Claude Desktop 을 다시 시작해 주세요." }
+    # python3·node 는 예상 밖의 오류가 나도 멈추지 않는다 (Add-RuntimeWarning 주석 참고)
+    try { Install-Python }
+    catch {
+        Write-Warn "python3 준비 중 오류: $($_.Exception.Message)"
+        Add-RuntimeWarning "python3 준비 실패 — 같은 명령어를 다시 실행해 주세요."
+    }
+    try { Install-Node }
+    catch {
+        Write-Warn "node 준비 중 오류: $($_.Exception.Message)"
+        Add-RuntimeWarning "node 준비 실패 — https://nodejs.org/ 에서 LTS 를 설치한 뒤 Claude Desktop 을 다시 시작해 주세요."
+    }
     Install-Claude
     Confirm-RepoAccess
 
